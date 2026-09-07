@@ -869,3 +869,25 @@ def test_the_written_hash_actually_locks_the_app(tmp_path, monkeypatch):
         assert client.get("/api/library").status_code == 401
         client.post("/login", data={"password": "let me in"}, follow_redirects=False)
         assert client.get("/api/library").status_code == 200
+
+
+@respx.mock
+def test_a_hunt_with_no_page_requested_works(client, two_records):
+    """Every hunt test passed an explicit page; the CLI passes none, and that
+    path crashed on a leftover `page += 1` against None."""
+    mock_seam(*two_records, long_one=False)
+    client.post("/api/hunt", json={"dig": "breaks", "want": 1})
+    report = wait_for_jobs(client, timeout=90)[0]["result"]
+    assert report["kept"] == 1
+    assert not report.get("error")
+
+
+@respx.mock
+def test_the_cli_hunt_path_runs_end_to_end(client, two_records, settings, monkeypatch):
+    """Drive `crate hunt` itself — argparse defaults page to None."""
+    from crate.cli import main
+
+    mock_seam(*two_records, long_one=False)
+    monkeypatch.setattr("crate.config.get_settings", lambda: settings)
+    monkeypatch.setattr("crate.cli.get_settings", lambda: settings)
+    assert main(["hunt", "breaks", "--want", "1", "--max-examine", "4"]) == 0

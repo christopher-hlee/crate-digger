@@ -214,10 +214,7 @@ async def hunt(
                 break
         visited.add(chosen_page)
 
-        try:
-            leads = await page_of(chosen_page)
-        except SourceError:
-            raise
+        leads = await page_of(chosen_page)
         if not leads and last_page and chosen_page > last_page:
             chosen_page = max(1, last_page)
             continue
@@ -233,7 +230,9 @@ async def hunt(
         )
         if report.stopped:
             break
-        page += 1 if page else 0
+        # `page` is what the caller asked for and is not read again; only
+        # `chosen_page` moves. Incrementing it here did nothing but crash when
+        # no page was requested, which is every run from the command line.
         chosen_page = (
             chosen_page + 1 if last_page and chosen_page < last_page
             else digs_module.random_page(dig)
