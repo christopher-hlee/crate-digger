@@ -29,7 +29,12 @@ the results down.
 Hunt on the VPS, mix locally:
 
 1. VPS runs `crate-hunt.timer`, building a crate of breaks.
-2. Your Mac pulls the rendered breaks into the Ableton folder.
+2. **You browse the shelf in the app and keep what you want.** Open the VPS's
+   web UI, go to **Breaks**, and audition them — playback streams the region
+   out of the source record, so nothing is written and nothing is downloaded.
+   Pressing **Keep** renders that break into `picked/`.
+
+3. Your Mac pulls down `picked/` — only what you chose.
 
 Nothing syncs on its own — `scp` and `rsync` are one-shot copies, and running
 one by hand forever is not a workflow. `deploy/sync-breaks.sh` does the pull;
@@ -52,8 +57,9 @@ cp deploy/com.cratedigger.sync.plist ~/Library/LaunchAgents/
 launchctl load ~/Library/LaunchAgents/com.cratedigger.sync.plist
 ```
 
-It runs at login and every fifteen minutes after, pulls only files you do not
-already have, and posts a notification when something arrives — silently when
+It syncs `picked/`, not `loops/` — the shelf stays on the server and only the
+breaks you kept come down. It runs at login and every fifteen minutes after,
+pulls only files you do not already have, and posts a notification when something arrives — silently when
 nothing does, because an alert every quarter hour saying "nothing" is one you
 learn to swipe away.
 

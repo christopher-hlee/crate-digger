@@ -17,6 +17,7 @@
   <nav class="tabs" role="tablist">
     <button class="tab is-active" data-view="dig" role="tab">Dig</button>
     <button class="tab" data-view="search" role="tab">Search</button>
+    <button class="tab" data-view="breaks" role="tab">Breaks</button>
     <button class="tab" data-view="crate" role="tab">Crate</button>
   </nav>
   <div class="topbar-right">
@@ -68,6 +69,34 @@
         </div>
       </form>
       <div id="search-results" class="dig-results"></div>
+    </div>
+
+    <!-- ── BREAKS ──────────────────────────────────────────── -->
+    <div class="view" id="view-breaks" hidden>
+      <div class="dig-head">
+        <div>
+          <h2>The shelf</h2>
+          <p class="muted">Every break found so far. Audition, then keep the ones you want — only those become files.</p>
+        </div>
+        <button id="breaks-refresh" class="btn">Refresh</button>
+      </div>
+      <div class="crate-filters">
+        <label class="mini">BPM <input id="b-bmin" type="number" placeholder="80" inputmode="numeric"> – <input id="b-bmax" type="number" placeholder="100" inputmode="numeric"></label>
+        <select id="b-sort">
+          <option value="score">Most drums</option>
+          <option value="lift">Biggest drop-out</option>
+          <option value="length">Longest</option>
+          <option value="bpm">BPM</option>
+        </select>
+        <select id="b-picked">
+          <option value="">All breaks</option>
+          <option value="true">Kept only</option>
+          <option value="false">Not yet judged</option>
+        </select>
+        <span id="b-count" class="muted small"></span>
+      </div>
+      <div id="breaks-list" class="dig-results"></div>
+      <div class="keyhint"><kbd>Space</kbd> audition · <kbd>S</kbd> keep · <kbd>↓</kbd>/<kbd>↑</kbd> move</div>
     </div>
 
     <!-- ── CRATE ───────────────────────────────────────────── -->

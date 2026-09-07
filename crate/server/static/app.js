@@ -314,6 +314,7 @@ function showView(name) {
   $$('.tab').forEach((t) => t.classList.toggle('is-active', t.dataset.view === name));
   $$('.view').forEach((v) => { v.hidden = v.id !== `view-${name}`; });
   if (name === 'crate') loadLibrary();
+  if (name === 'breaks') loadBreaks();
 }
 
 $$('.tab').forEach((t) => t.addEventListener('click', () => showView(t.dataset.view)));
@@ -1075,7 +1076,7 @@ document.addEventListener('keydown', (ev) => {
   const tag = ev.target.tagName;
   if (['INPUT', 'TEXTAREA', 'SELECT'].includes(tag) || modal.open) return;
 
-  const cards = $$('.card', $(`#view-${state.view}`));
+  const cards = $$('.card, .break-card', $(`#view-${state.view}`));
   const currentIndex = cards.findIndex((c) => c.classList.contains('is-current'));
 
   const focus = (i) => {
@@ -1131,3 +1132,103 @@ document.addEventListener('keydown', (ev) => {
   const first = $('.dig-chip');
   if (first) runDig(first.dataset.slug);
 })();
+
+/* ── the break shelf ───────────────────────────────────────── */
+/* Breaks live on whichever machine did the digging. Auditioning streams the
+   region out of the source record; nothing becomes a file until you keep it,
+   which is the difference between browsing a shelf and being handed one. */
+
+async function loadBreaks() {
+  const params = new URLSearchParams({ sort: $('#b-sort').value, limit: '300' });
+  if ($('#b-bmin').value) params.set('bpm_min', $('#b-bmin').value);
+  if ($('#b-bmax').value) params.set('bpm_max', $('#b-bmax').value);
+  if ($('#b-picked').value) params.set('picked', $('#b-picked').value);
+
+  const data = await api(`/api/breaks?${params}`);
+  const list = $('#breaks-list');
+  list.replaceChildren();
+  $('#b-count').textContent =
+    `${data.count} break${data.count === 1 ? '' : 's'}`;
+
+  if (!data.breaks.length) {
+    list.innerHTML = `<div class="empty"><h3>Nothing on the shelf yet</h3>
+      <p>Run a hunt, or press Find breaks on a record in your crate.</p></div>`;
+    return;
+  }
+
+  const frag = document.createDocumentFragment();
+  data.breaks.forEach((b) => frag.append(breakCard(b)));
+  list.append(frag);
+}
+
+function breakCard(b) {
+  const el = document.createElement('div');
+  el.className = 'break-card' + (b.picked ? ' is-picked' : '');
+  el.dataset.key = `break:${b.sample_id}:${b.idx}`;
+  const meta = [b.artist, b.year, b.bpm && `${Math.round(b.bpm)} BPM`, b.musical_key]
+    .filter(Boolean).join(' · ');
+
+  el.innerHTML = `
+    <button class="play-btn" title="Audition just this break">▶</button>
+    <div class="card-main">
+      <div class="card-title">${esc(b.title || 'Untitled')}</div>
+      <div class="card-meta"><span>${esc(meta)}</span></div>
+    </div>
+    <div class="stats">
+      <span class="where">${fmtTime(b.start_sec)}–${fmtTime(b.end_sec)}</span>
+      <span class="break-meter" title="${Math.round(b.score * 100)}% drums, ${Math.round(b.lift * 100)} above this record"><i style="width:${Math.round(b.score * 100)}%"></i></span>
+    </div>
+    <div class="card-actions"></div>`;
+
+  $('.play-btn', el).addEventListener('click', (ev) => {
+    ev.stopPropagation();
+    playRange(`/api/samples/${b.sample_id}/file`, el.dataset.key, b.start_sec, b.end_sec);
+    $$('.break-card').forEach((c) => c.classList.remove('is-current'));
+    el.classList.add('is-current');
+  });
+
+  const actions = $('.card-actions', el);
+  const keepBtn = addBtn(actions, b.picked ? '✓ Kept' : 'Keep',
+    'Render this break and put it in the sync folder', async (ev) => {
+      ev.stopPropagation();
+      const btn = ev.currentTarget;
+      btn.disabled = true;
+      try {
+        if (b.picked) {
+          await api(`/api/breaks/${b.sample_id}/${b.idx}/pick`, { method: 'DELETE' });
+          b.picked = false;
+          btn.textContent = 'Keep';
+          el.classList.remove('is-picked');
+        } else {
+          const res = await api(`/api/breaks/${b.sample_id}/${b.idx}/pick`,
+            { method: 'POST', body: { note: '' } });
+          b.picked = true;
+          btn.textContent = '✓ Kept';
+          el.classList.add('is-picked');
+          makeDraggable(el, { mime: 'audio/wav', filename: res.filename, url: res.url });
+          toast(`${res.filename} — it will sync down`, 'ok');
+        }
+      } finally {
+        btn.disabled = false;
+      }
+    });
+  keepBtn.title = 'Only kept breaks become files';
+
+  addBtn(actions, 'Record', 'Open the whole record', (ev) => {
+    ev.stopPropagation();
+    showView('crate');
+    api(`/api/samples/${b.sample_id}`).then((row) => openDetail(row));
+  });
+  return el;
+}
+
+$('#breaks-refresh').addEventListener('click', loadBreaks);
+['#b-sort', '#b-picked'].forEach((sel) =>
+  $(sel).addEventListener('change', loadBreaks));
+['#b-bmin', '#b-bmax'].forEach((sel) => {
+  let timer;
+  $(sel).addEventListener('input', () => {
+    clearTimeout(timer);
+    timer = setTimeout(loadBreaks, 250);
+  });
+});

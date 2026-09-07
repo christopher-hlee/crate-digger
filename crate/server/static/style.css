@@ -323,3 +323,20 @@ dialog::backdrop { background: rgba(0,0,0,.6); }
 
 .empty { padding: 34px 16px; text-align: center; color: var(--ink-mute); }
 .empty h3 { margin-bottom: 6px; color: var(--ink-dim); }
+
+/* ── the break shelf ───────────────────────────────────────── */
+.break-card {
+  display: grid; grid-template-columns: 34px 1fr auto auto; gap: 12px;
+  align-items: center; padding: 9px 12px;
+  background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius);
+}
+.break-card:hover { border-color: var(--line-2); background: var(--panel-2); }
+.break-card.is-picked { border-color: var(--gold-dim); box-shadow: inset 3px 0 0 var(--gold); }
+.break-card .where { font-family: var(--mono); font-size: 11px; color: var(--ink-mute); }
+.break-card .stats { display: flex; gap: 6px; align-items: center; }
+.break-meter {
+  width: 54px; height: 4px; border-radius: 2px; background: var(--line);
+  overflow: hidden; position: relative;
+}
+.break-meter i { position: absolute; inset: 0 auto 0 0; background: var(--rust); }

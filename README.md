@@ -41,6 +41,10 @@ transients, cuts the loop, and hands the file to your DAW.
   one, keeps only the ones with a real drum break in them, and throws the rest
   back — file deleted, marked so the seam stops offering them. The keepers land
   in your crate with the break already located and rendered as a WAV.
+- **Browse the shelf** — a Breaks tab listing every break found, across every
+  record. Auditioning streams the region out of the source; nothing becomes a
+  file until you press Keep. That is the point: the hunt fills a shelf, you
+  stand in front of it and choose, and only your choices sync to the DAW.
 - **Chop** — slice at the hits or on a musical grid. Cuts land on zero
   crossings with micro-fades, so one-shots never click. Export writes a
   numbered kit ready to drop on a drum rack.

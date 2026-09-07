@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-SCHEMA_VERSION = 2
+SCHEMA_VERSION = 3
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS samples (
@@ -102,6 +102,21 @@ CREATE TABLE IF NOT EXISTS verdicts (
     created_at REAL NOT NULL,
     PRIMARY KEY (source, source_id)
 );
+
+-- A break you have listened to and want. Everything else stays on the
+-- server: the point is to choose, not to receive the whole shelf.
+CREATE TABLE IF NOT EXISTS picks (
+    id         INTEGER PRIMARY KEY AUTOINCREMENT,
+    sample_id  INTEGER NOT NULL REFERENCES samples(id) ON DELETE CASCADE,
+    idx        INTEGER NOT NULL,
+    start_sec  REAL NOT NULL,
+    end_sec    REAL NOT NULL,
+    file_path  TEXT,
+    note       TEXT NOT NULL DEFAULT '',
+    created_at REAL NOT NULL,
+    UNIQUE(sample_id, idx)
+);
+CREATE INDEX IF NOT EXISTS idx_picks_sample ON picks(sample_id);
 
 CREATE TABLE IF NOT EXISTS meta (
     key   TEXT PRIMARY KEY,

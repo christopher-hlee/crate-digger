@@ -14,6 +14,7 @@ from ..sources.base import SourceError
 from .auth import guard, router as auth_router
 from .deps import AppState
 from .routes_audio import router as audio_router
+from .routes_breaks import router as breaks_router
 from .routes_dig import router as dig_router
 from .routes_library import router as library_router
 
@@ -65,6 +66,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(dig_router)
     app.include_router(library_router)
     app.include_router(audio_router)
+    app.include_router(breaks_router)
 
     @app.get("/api/health")
     async def health(request: Request) -> dict:

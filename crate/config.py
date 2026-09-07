@@ -91,6 +91,11 @@ class Settings(BaseSettings):
     def loops_dir(self) -> Path:
         return self.library_dir / "loops"
 
+    @property
+    def picked_dir(self) -> Path:
+        """Only what you chose. This is the folder worth syncing."""
+        return self.library_dir / "picked"
+
     def model_post_init(self, _context) -> None:
         if not self.session_secret:
             from .security import random_secret
@@ -98,7 +103,8 @@ class Settings(BaseSettings):
             object.__setattr__(self, "session_secret", random_secret())
 
     def ensure_dirs(self) -> None:
-        for d in (self.library_dir, self.audio_dir, self.slices_dir, self.loops_dir):
+        for d in (self.library_dir, self.audio_dir, self.slices_dir,
+                  self.loops_dir, self.picked_dir):
             d.mkdir(parents=True, exist_ok=True)
         if self.export_dir:
             Path(self.export_dir).mkdir(parents=True, exist_ok=True)

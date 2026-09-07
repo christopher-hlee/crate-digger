@@ -11,7 +11,10 @@
 set -uo pipefail
 
 REMOTE="${CRATE_REMOTE:-platform@74.208.54.100}"
-REMOTE_DIR="${CRATE_REMOTE_DIR:-/home/platform/CrateDigger/loops/}"
+# `picked/`, not `loops/`: the shelf stays on the server and only what you
+# chose in the app comes down. Point this at loops/ if you would rather have
+# everything and sift locally.
+REMOTE_DIR="${CRATE_REMOTE_DIR:-/home/platform/CrateDigger/picked/}"
 LOCAL_DIR="${CRATE_LOCAL_DIR:-$HOME/Documents/PROJECTS/samples}"
 LOG="${CRATE_SYNC_LOG:-$HOME/Library/Logs/crate-sync.log}"
 
@@ -43,11 +46,11 @@ AFTER=$(find "$LOCAL_DIR" -name '*.wav' -type f 2>/dev/null | wc -l | tr -d ' ')
 NEW=$((AFTER - BEFORE))
 
 if [ "$NEW" -gt 0 ]; then
-  log "$NEW new break(s) — $AFTER in $LOCAL_DIR"
+  log "$NEW newly kept break(s) — $AFTER in $LOCAL_DIR"
   # Only speak up when something actually arrived; a notification every
   # fifteen minutes saying "nothing" is one you learn to dismiss.
   if command -v osascript >/dev/null; then
-    osascript -e "display notification \"$NEW new break$([ "$NEW" -eq 1 ] || echo s) ready\" with title \"Crate Digger\"" 2>/dev/null || true
+    osascript -e "display notification \"$NEW break$([ "$NEW" -eq 1 ] || echo s) you kept, ready in Ableton\" with title \"Crate Digger\"" 2>/dev/null || true
   fi
 else
   log "nothing new"

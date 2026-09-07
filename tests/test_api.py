@@ -932,3 +932,67 @@ def test_a_failure_reason_is_counted_not_just_tallied(client, audio_file):
     report = wait_for_jobs(client, timeout=60)[0]["result"]
     assert report["errors"] == 1
     assert report["failures"], "a bare count of failures explains nothing"
+
+
+# ── the shelf ─────────────────────────────────────────────────────────
+# The hunt fills a shelf; browsing is how you stand in front of it. Nothing
+# becomes a file on your machine until you choose it.
+
+def test_the_shelf_lists_breaks_across_records(client, kept):
+    client.post(f"/api/samples/{kept['id']}/breaks")
+    body = client.get("/api/breaks").json()
+    for entry in body["breaks"]:
+        assert entry["sample_id"] == kept["id"]
+        assert entry["title"] == kept["title"]
+        assert entry["picked"] is False
+        assert entry["audition_url"].startswith(f"/api/samples/{kept['id']}/file")
+
+
+def test_auditioning_writes_nothing(client, kept, settings):
+    client.post(f"/api/samples/{kept['id']}/breaks")
+    client.get("/api/breaks")
+    assert not any(settings.picked_dir.iterdir()), "browsing must not create files"
+
+
+def test_keeping_a_break_renders_it_and_only_it(client, kept, settings):
+    found = client.post(f"/api/samples/{kept['id']}/breaks").json()
+    if not found["count"]:
+        pytest.skip("this fixture record has no break to keep")
+
+    res = client.post(f"/api/breaks/{kept['id']}/0/pick", json={"note": ""}).json()
+    assert res["picked"] is True
+    assert Path(res["path"]).is_file()
+    assert Path(res["path"]).parent == settings.picked_dir
+    assert len(list(settings.picked_dir.glob("*.wav"))) == 1, "only the one chosen"
+    assert client.get(res["url"]).status_code == 200
+
+    shelf = client.get("/api/breaks").json()["breaks"]
+    assert shelf[0]["picked"] is True
+    assert client.get("/api/breaks?picked=true").json()["count"] == 1
+    assert client.get("/api/breaks?picked=false").json()["count"] == len(shelf) - 1
+
+
+def test_unkeeping_removes_the_file(client, kept, settings):
+    found = client.post(f"/api/samples/{kept['id']}/breaks").json()
+    if not found["count"]:
+        pytest.skip("no break on this fixture")
+    res = client.post(f"/api/breaks/{kept['id']}/0/pick", json={}).json()
+    assert Path(res["path"]).is_file()
+    assert client.delete(f"/api/breaks/{kept['id']}/0/pick").json()["picked"] is False
+    assert not Path(res["path"]).exists()
+    assert client.get("/api/breaks?picked=true").json()["count"] == 0
+
+
+def test_the_shelf_filters_by_tempo(client, kept):
+    client.post(f"/api/samples/{kept['id']}/breaks")
+    bpm = client.get(f"/api/samples/{kept['id']}").json()["bpm"]
+    assert client.get(f"/api/breaks?bpm_min={bpm - 2}&bpm_max={bpm + 2}").json()["count"] >= 0
+    assert client.get(f"/api/breaks?bpm_min={bpm + 60}").json()["count"] == 0
+
+
+def test_keeping_a_break_that_is_not_there(client, kept):
+    assert client.post(f"/api/breaks/{kept['id']}/99/pick", json={}).status_code == 404
+
+
+def test_picked_file_path_traversal_is_refused(client):
+    assert client.get("/api/picked/..%2F..%2Fcrate.sqlite3").status_code in (400, 404)
