@@ -77,9 +77,17 @@ function makeDraggable(el, { mime, filename, url }) {
 const player = $('#player');
 let padTimer = null;
 
+function setSource(url) {
+  /* Assigning .src reloads the element — it stops playback and resets
+     duration to NaN — so only assign when the URL actually changes. Clicking
+     a card you are already auditioning must not cut the music off. */
+  const abs = new URL(url, location.href).href;
+  if (player.src !== abs) player.src = url;
+}
+
 function play(url, key) {
   if (state.playingKey === key && !player.paused) { player.pause(); return; }
-  if (player.src !== new URL(url, location.href).href) player.src = url;
+  setSource(url);
   state.playingKey = key;
   player.play().catch((err) => toast(`Can't play that: ${err.message}`, 'err'));
   syncPlayingUi();
@@ -87,7 +95,7 @@ function play(url, key) {
 
 function playRange(url, key, start, end) {
   clearTimeout(padTimer);
-  if (player.src !== new URL(url, location.href).href) player.src = url;
+  setSource(url);
   state.playingKey = key;
   const go = () => {
     player.currentTime = start;
@@ -106,6 +114,8 @@ function syncPlayingUi() {
 }
 
 player.addEventListener('play', syncPlayingUi);
+player.addEventListener('loadedmetadata', drawWave);
+player.addEventListener('durationchange', drawWave);
 player.addEventListener('pause', syncPlayingUi);
 player.addEventListener('ended', () => { state.playingKey = null; syncPlayingUi(); });
 player.addEventListener('timeupdate', () => {
@@ -174,11 +184,16 @@ function cardFor(item, { mode }) {
     }
   }
 
-  $('.play-btn', el).addEventListener('click', (ev) => {
+  $('.play-btn', el).addEventListener('click', async (ev) => {
     ev.stopPropagation();
-    const url = item.id ? `/api/samples/${item.id}/file` : item.stream_url;
-    if (url) play(url, leadKey(item));
-    else window.open(item.page_url, '_blank', 'noopener');
+    if (item.id) { play(`/api/samples/${item.id}/file`, leadKey(item)); return; }
+    const btn = ev.currentTarget;
+    btn.textContent = '…';
+    const track = await playableFor(item);
+    btn.textContent = track ? '▶' : '↗';
+    if (track) play(track.stream_url, leadKey(item));
+    else if (item.page_url) window.open(item.page_url, '_blank', 'noopener');
+    else toast('Nothing playable on that one', 'err');
   });
   el.addEventListener('click', () => openDetail(item));
   return el;
@@ -222,6 +237,28 @@ function stripLead(item) {
   keys.forEach((k) => { if (item[k] !== undefined && item[k] !== null) out[k] = item[k]; });
   out.extra = out.extra || {};
   return out;
+}
+
+/* An Archive search hit is an item, not a track: it carries no audio URL.
+   Resolve it the moment you want to hear it, so auditioning stays one click
+   and the extra level is something you never have to know about. */
+const resolveCache = new Map();
+
+async function playableFor(item) {
+  if (item.stream_url) return item;
+  if (item.source !== 'ia') return null;
+
+  const key = leadKey(item);
+  if (!resolveCache.has(key)) {
+    resolveCache.set(key, api(`/api/ia/item/${encodeURIComponent(item.source_id)}`)
+      .then((d) => d.results || [])
+      .catch(() => []));
+  }
+  const tracks = await resolveCache.get(key);
+  if (!tracks.length) return null;
+  // Carry the item's own metadata down onto the track, which often has only
+  // a filename for a title.
+  return { ...tracks[0], title: tracks[0].title || item.title, _siblings: tracks };
 }
 
 async function expandItem(item, cardEl) {
@@ -378,16 +415,34 @@ async function openDetail(item) {
   renderOut(row);
 
   if (state.sample?.file_path) {
-    player.src = `/api/samples/${state.sample.id}/file`;
+    setWaveNote('');
+    setSource(`/api/samples/${state.sample.id}/file`);
     if (!state.sample.peaks) {
       api(`/api/samples/${state.sample.id}/peaks`, { quiet: true })
         .then((d) => { state.sample.peaks = d.peaks; drawWave(); })
         .catch(() => {});
     }
-  } else if (item.stream_url) {
-    player.src = item.stream_url;
+  } else {
+    // Not in the crate yet: stream it straight from the archive so you can
+    // hear it before deciding. The waveform needs the actual file, which is
+    // what Keep is for.
+    setWaveNote('Resolving audio…');
+    const track = await playableFor(item);
+    if (state.current !== item) return;          // they moved on already
+    if (track) {
+      state.current = { ...item, stream_url: track.stream_url };
+      setSource(track.stream_url);
+      setWaveNote('Streaming preview — Keep this record to analyse it and draw the waveform');
+    } else {
+      setWaveNote('No audio on this one — open it at the source');
+    }
   }
   drawWave();
+}
+
+function setWaveNote(text) {
+  const el = $('#wave-empty');
+  el.textContent = text || 'No waveform yet';
 }
 
 function renderBadges(row) {
@@ -477,7 +532,20 @@ function drawWave() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
   ctx.clearRect(0, 0, w, h);
   $('#wave-empty').hidden = Boolean(peaks?.length);
-  if (!peaks?.length) return;
+
+  if (!peaks?.length) {
+    // Streaming a lead: no peaks exist yet, but silence and a dead box look
+    // identical, so show the transport moving.
+    const total = player.duration;
+    if (Number.isFinite(total) && total > 0) {
+      const y = h - 10;
+      ctx.fillStyle = '#322a22';
+      ctx.fillRect(0, y, w, 3);
+      ctx.fillStyle = '#c9a227';
+      ctx.fillRect(0, y, w * (player.currentTime / total), 3);
+    }
+    return;
+  }
 
   const mid = h / 2;
   const dur = waveDuration();

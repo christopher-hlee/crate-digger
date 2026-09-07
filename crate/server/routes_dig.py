@@ -148,6 +148,21 @@ async def record_verdict(request: Request, body: VerdictIn) -> dict:
     return {"ok": True}
 
 
+async def resolve_playable(app_state, lead: Lead, limit: int = 6) -> list[Lead]:
+    """Turn a lead into the thing you can actually download.
+
+    A search hit on the Internet Archive is an *item* — a shelf, not a record.
+    The audio URL only exists one level down, on its files. Keeping a 78 should
+    keep both sides of it, so expand the item and take its tracks.
+
+    Anything that already knows its own audio URL passes straight through.
+    """
+    if lead.source != "ia" or lead.stream_url:
+        return [lead]
+    tracks = await app_state.registry.ia.tracks(lead.source_id)
+    return tracks[:limit] if tracks else []
+
+
 @router.post("/ingest")
 async def ingest(request: Request, body: IngestIn) -> dict:
     """Queue one or more leads for download and analysis."""
@@ -159,16 +174,32 @@ async def ingest(request: Request, body: IngestIn) -> dict:
         lead = _lead_from(model)
 
         async def run(lead: Lead = lead) -> dict:
-            row = await library.ingest_lead(
-                app_state.db,
-                app_state.registry.client,
-                lead,
-                audio_dir=settings.audio_dir,
-                max_mb=settings.max_download_mb,
-                analyse=body.analyse,
-            )
-            return {"sample_id": row.get("id"), "status": row.get("status"),
-                    "error": row.get("error")}
+            # Resolving is a network call, so it belongs in the job rather than
+            # in the request that queues it.
+            try:
+                targets = await resolve_playable(app_state, lead, body.max_tracks)
+            except SourceError as exc:
+                return {"source_id": lead.source_id, "error": str(exc), "samples": []}
+            if not targets:
+                return {
+                    "source_id": lead.source_id,
+                    "error": "No playable audio on that Archive item",
+                    "samples": [],
+                }
+
+            results = []
+            for target in targets:
+                row = await library.ingest_lead(
+                    app_state.db,
+                    app_state.registry.client,
+                    target,
+                    audio_dir=settings.audio_dir,
+                    max_mb=settings.max_download_mb,
+                    analyse=body.analyse,
+                )
+                results.append({"sample_id": row.get("id"), "title": row.get("title"),
+                                "status": row.get("status"), "error": row.get("error")})
+            return {"source_id": lead.source_id, "samples": results}
 
         job = app_state.jobs.submit(
             "ingest", lead.title or lead.source_id, run

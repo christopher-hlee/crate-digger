@@ -26,6 +26,8 @@ class LeadIn(BaseModel):
 class IngestIn(BaseModel):
     leads: list[LeadIn]
     analyse: bool = True
+    #: An Archive item expands into its tracks; a 78 has two sides, an LP more.
+    max_tracks: int = Field(default=6, ge=1, le=50)
 
 
 class VerdictIn(BaseModel):

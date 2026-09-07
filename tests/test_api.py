@@ -379,3 +379,81 @@ def test_import_a_local_file(client, audio_file):
     assert row["status"] == "ready"
     assert row["source"] == "local"
     assert client.post("/api/import", json={"path": "/nope/x.wav"}).status_code == 404
+
+
+# ── keeping an unresolved Archive item ────────────────────────────────
+# A search hit on the Archive is an item, not a track, and carries no audio
+# URL. Keeping one used to file a row and silently download nothing.
+
+def mock_two_sided_record(audio_bytes: bytes) -> None:
+    respx.get(IA_META).mock(return_value=httpx.Response(200, json={
+        "metadata": {"identifier": "78_test-record", "title": "Test Record",
+                     "creator": "The Trio", "collection": ["georgeblood"]},
+        "files": [
+            {"name": "side-a.flac", "format": "Flac", "size": "900000",
+             "title": "Side A", "length": "0:12"},
+            {"name": "side-b.flac", "format": "Flac", "size": "900000",
+             "title": "Side B", "length": "0:12"},
+        ],
+    }))
+    for side in ("side-a", "side-b"):
+        respx.get(f"https://archive.org/download/78_test-record/{side}.flac").mock(
+            return_value=httpx.Response(
+                200, headers={"content-type": "audio/flac"}, content=audio_bytes))
+
+
+@respx.mock
+def test_keeping_a_bare_archive_item_downloads_both_sides(client, audio_file):
+    mock_two_sided_record(audio_file.read_bytes())
+
+    # Exactly what a Dig card sends: an item, with no stream_url anywhere.
+    res = client.post("/api/ingest", json={"leads": [{
+        "source": "ia", "source_id": "78_test-record", "title": "Test Record",
+        "artist": "The Trio"}]})
+    assert res.status_code == 200
+    wait_for_jobs(client)
+
+    rows = client.get("/api/library").json()["results"]
+    assert len(rows) == 2, "an item should expand into its tracks"
+    assert {r["title"] for r in rows} == {"Side A", "Side B"}
+    for row in rows:
+        assert row["status"] == "ready"
+        assert row["bpm"]
+        assert Path(row["file_path"]).is_file()
+
+
+@respx.mock
+def test_max_tracks_caps_the_expansion(client, audio_file):
+    mock_two_sided_record(audio_file.read_bytes())
+    client.post("/api/ingest", json={
+        "leads": [{"source": "ia", "source_id": "78_test-record", "title": "Test Record"}],
+        "max_tracks": 1})
+    wait_for_jobs(client)
+    assert client.get("/api/library").json()["total"] == 1
+
+
+@respx.mock
+def test_an_item_with_no_audio_says_so_on_the_job(client):
+    respx.get(IA_META).mock(return_value=httpx.Response(200, json={
+        "metadata": {"identifier": "78_test-record", "title": "Text Only"},
+        "files": [{"name": "scan.jpg", "format": "JPEG", "size": "50000"}],
+    }))
+    client.post("/api/ingest", json={"leads": [{
+        "source": "ia", "source_id": "78_test-record", "title": "Text Only"}]})
+    jobs = wait_for_jobs(client)
+    assert "No playable audio" in jobs[0]["result"]["error"]
+
+
+@respx.mock
+def test_a_lead_that_knows_its_own_url_is_not_re_resolved(client, audio_file):
+    """YouTube, Openverse and already-expanded tracks must pass straight through."""
+    meta = respx.get(IA_META).mock(return_value=httpx.Response(200, json={}))
+    respx.get(IA_FILE).mock(return_value=httpx.Response(
+        200, headers={"content-type": "audio/flac"}, content=audio_file.read_bytes()))
+
+    client.post("/api/ingest", json={"leads": [{
+        "source": "ia", "source_id": "78_test-record/side-a.flac", "title": "Side A",
+        "stream_url": IA_FILE}]})
+    wait_for_jobs(client)
+    assert meta.call_count == 0
+    assert client.get("/api/library").json()["total"] == 1
