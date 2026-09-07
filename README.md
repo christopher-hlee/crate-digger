@@ -121,6 +121,7 @@ side where the band drops out for four bars is exactly what does qualify.
 crate hunt breaks --want 6        # dig, listen, keep only records with breaks
 crate breaks 12 --export          # find the breaks in one record, write WAVs
 crate ls --breaks 0.5             # what in my crate is drum-forward
+crate rescan --breaks-only        # re-read everything you already have
 ```
 
 Every kept record shows its breaks in a panel: click one to set it as the loop

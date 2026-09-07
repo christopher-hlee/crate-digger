@@ -217,6 +217,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--breaks", type=float, metavar="MIN", help="0-1 percussive ratio")
     p.add_argument("--limit", type=int, default=50)
 
+    p = sub.add_parser("rescan", help="re-run analysis over everything already downloaded")
+    p.add_argument("--breaks-only", action="store_true", dest="breaks_only",
+                   help="only redo break detection, keep tempo and key")
+    p.add_argument("--limit", type=int, default=0, help="stop after N records")
+
     p = sub.add_parser("analyze", help="re-analyse a sample")
     p.add_argument("sample_id", type=int)
 
@@ -276,6 +281,57 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "digs":
         for dig in digs_module.DIGS:
             print(f"  {dig.slug.ljust(24)} {dig.name.ljust(26)} {dig.blurb}")
+        return 0
+
+    if args.cmd == "rescan":
+        from .audio import dsp
+
+        rows = db.query(
+            "SELECT * FROM samples WHERE file_path IS NOT NULL ORDER BY id"
+        )
+        if args.limit:
+            rows = rows[: args.limit]
+        changed = lost = gained = 0
+        for row in rows:
+            path = Path(row["file_path"])
+            if not path.is_file():
+                print(f"  [{row['id']}] missing on disk: {path}", file=sys.stderr)
+                continue
+            had = bool(row.get("breaks") and '"usable": true' in (row["breaks"] or ""))
+            try:
+                if args.breaks_only:
+                    y22, _ = CACHE.load(path, sr=22050)
+                    found = dsp.find_breaks(y22, 22050)
+                    db.update_sample(row["id"], breaks=found)
+                else:
+                    db.update_sample(
+                        row["id"], **library.analyze_file(path), status="ready"
+                    )
+                    found = db.get_sample(row["id"])["breaks"] or []
+            except Exception as exc:
+                print(f"  [{row['id']}] failed: {exc}", file=sys.stderr)
+                continue
+
+            now = dsp.has_usable_break(found)
+            changed += 1
+            mark = "  "
+            if had and not now:
+                lost += 1
+                mark = "- "
+            elif now and not had:
+                gained += 1
+                mark = "+ "
+            title = (row.get("title") or "")[:46].ljust(46)
+            detail = "no break" if not now else (
+                f"break {found[0]['start_sec']:6.1f}-{found[0]['end_sec']:6.1f}s"
+                f"  +{found[0]['lift'] * 100:.0f}")
+            print(f"{mark}[{row['id']:4d}] {title} {detail}")
+
+        print(f"\n{changed} record(s) re-read · {lost} lost a break it never had"
+              f" · {gained} gained one", file=sys.stderr)
+        if lost:
+            print("Old renders in loops/ are stale — clear them and export again.",
+                  file=sys.stderr)
         return 0
 
     if args.cmd == "hunt":

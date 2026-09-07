@@ -746,3 +746,22 @@ def test_a_forged_cookie_is_refused(locked_client):
     locked_client.cookies.set("crate_session", "made.up")
     assert locked_client.get("/api/library").status_code == 401
     locked_client.cookies.clear()
+
+
+def test_rescan_reclassifies_a_stale_break(client, kept, tmp_path):
+    """After a detector change, re-reading must correct what is already stored."""
+    from crate.cli import main
+
+    sid = kept["id"]
+    # What the old detector stored for lead-in hiss: a "break" at 0s.
+    client.patch(f"/api/samples/{sid}", json={"notes": "before rescan"})
+    state = client.app.state.crate
+    state.db.update_sample(sid, breaks=[{
+        "start_sec": 0.0, "end_sec": 2.6, "length_sec": 2.6,
+        "score": 0.44, "lift": 0.36, "usable": True}])
+    assert client.get("/api/library?has_breaks=true").json()["total"] == 1
+
+    # The endpoint the CLI's rescan drives, per record.
+    client.post(f"/api/samples/{sid}/breaks")
+    after = client.get(f"/api/samples/{sid}").json()["breaks"] or []
+    assert not any(b["start_sec"] == 0.0 and b["lift"] == 0.36 for b in after)
