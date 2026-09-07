@@ -219,7 +219,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--reload", action="store_true")
 
     sub.add_parser("digs", help="list the preset digs")
-    sub.add_parser("hashpw", help="hash a password for CRATE_PASSWORD_HASH")
+    p = sub.add_parser("hashpw", help="set the password that guards a served install")
+    p.add_argument("--write", action="store_true",
+                   help="write straight into .env instead of printing")
+    p.add_argument("--env", default=".env", help="which file to write")
 
     p = sub.add_parser("dig", help="rummage through one seam")
     p.add_argument("slug")
@@ -317,9 +320,33 @@ def main(argv: list[str] | None = None) -> int:
         if pw != getpass.getpass("Again: "):
             print("They do not match.", file=sys.stderr)
             return 1
-        print("\nPut these in your .env:\n")
-        print(f"CRATE_PASSWORD_HASH={hash_password(pw)}")
-        print(f"CRATE_SESSION_SECRET={random_secret()}")
+        values = {
+            "CRATE_PASSWORD_HASH": hash_password(pw),
+            "CRATE_SESSION_SECRET": random_secret(),
+        }
+
+        if not args.write:
+            print("\nPut these in your .env — uncommented:\n")
+            for key, value in values.items():
+                print(f"{key}={value}")
+            print("\nOr skip the copy-paste:  crate hashpw --write")
+            return 0
+
+        # Writing it is the whole point: a hash pasted back in as a comment
+        # leaves the app open, and the only sign is `auth: false` in /health.
+        env_path = Path(args.env)
+        lines = env_path.read_text().splitlines() if env_path.is_file() else []
+        for key, value in values.items():
+            replacement = f"{key}={value}"
+            for i, line in enumerate(lines):
+                if line.lstrip("# ").startswith(f"{key}="):
+                    lines[i] = replacement
+                    break
+            else:
+                lines.append(replacement)
+        env_path.write_text("\n".join(lines) + "\n")
+        print(f"Wrote CRATE_PASSWORD_HASH and CRATE_SESSION_SECRET to {env_path}")
+        print("Restart for it to take effect:  sudo systemctl restart crate-api")
         return 0
 
     if args.cmd == "digs":

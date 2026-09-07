@@ -35,9 +35,10 @@ if [ ! -f .env ]; then
   cp .env.example .env
   echo
   echo "!! Set a password before this answers on a public address:"
-  echo "!!     .venv/bin/crate hashpw"
-  echo "!! and paste both lines into .env. Until you do, anyone who finds the"
-  echo "!! URL can spend your disk and bandwidth."
+  echo "!!     .venv/bin/crate hashpw --write"
+  echo "!! Until you do, anyone who finds the URL can spend your disk and"
+  echo "!! bandwidth. Check it took:  curl -s localhost:8770/api/health"
+  echo "!! should say \"auth\":true."
   echo
 fi
 

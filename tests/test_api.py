@@ -781,3 +781,91 @@ def test_a_hunt_stops_when_the_disk_runs_low(client, two_records, monkeypatch):
     assert report["kept"] == 0
     assert "free" in report["stopped"]
     assert client.get("/api/library").json()["total"] == 0
+
+
+# ── setting the password ──────────────────────────────────────────────
+# The failure this guards against: `crate hashpw` prints two lines, they get
+# pasted back in still commented, and the app stays wide open with `auth: false`
+# in /health as the only sign.
+
+def test_hashpw_write_replaces_commented_placeholders(tmp_path, monkeypatch):
+    import getpass
+
+    from crate.cli import main
+    from crate.security import verify_password
+
+    env = tmp_path / ".env"
+    env.write_text(
+        "# comment\n"
+        "CRATE_LIBRARY_DIR=/home/platform/CrateDigger\n"
+        "# CRATE_PASSWORD_HASH=...\n"
+        "# CRATE_SESSION_SECRET=...\n"
+    )
+    monkeypatch.setattr(getpass, "getpass", lambda *_a: "hunter2")
+    assert main(["hashpw", "--write", "--env", str(env)]) == 0
+
+    lines = env.read_text().splitlines()
+    hashes = [l for l in lines if l.startswith("CRATE_PASSWORD_HASH=")]
+    secrets = [l for l in lines if l.startswith("CRATE_SESSION_SECRET=")]
+    assert len(hashes) == 1 and len(secrets) == 1, "must replace, not append"
+    assert not any(l.startswith("# CRATE_PASSWORD_HASH") for l in lines)
+    assert "CRATE_LIBRARY_DIR=/home/platform/CrateDigger" in lines
+    assert verify_password("hunter2", hashes[0].split("=", 1)[1])
+
+
+def test_hashpw_write_appends_when_the_key_is_absent(tmp_path, monkeypatch):
+    import getpass
+
+    from crate.cli import main
+
+    env = tmp_path / ".env"
+    env.write_text("CRATE_PORT=8770\n")
+    monkeypatch.setattr(getpass, "getpass", lambda *_a: "hunter2")
+    assert main(["hashpw", "--write", "--env", str(env)]) == 0
+    text = env.read_text()
+    assert "CRATE_PORT=8770" in text
+    assert "CRATE_PASSWORD_HASH=pbkdf2_sha256$" in text
+
+
+def test_hashpw_refuses_a_mismatch(tmp_path, monkeypatch, capsys):
+    import getpass
+
+    from crate.cli import main
+
+    answers = iter(["one", "two"])
+    monkeypatch.setattr(getpass, "getpass", lambda *_a: next(answers))
+    env = tmp_path / ".env"
+    env.write_text("")
+    assert main(["hashpw", "--write", "--env", str(env)]) == 1
+    assert env.read_text() == ""
+
+
+def test_the_written_hash_actually_locks_the_app(tmp_path, monkeypatch):
+    """End to end: write it, load it, and the API refuses anonymous callers."""
+    import getpass
+
+    from fastapi.testclient import TestClient
+
+    from crate.cli import main
+    from crate.config import Settings
+    from crate.server.app import create_app
+
+    env = tmp_path / ".env"
+    env.write_text("")
+    monkeypatch.setattr(getpass, "getpass", lambda *_a: "let me in")
+    main(["hashpw", "--write", "--env", str(env)])
+
+    values = dict(
+        line.split("=", 1) for line in env.read_text().splitlines() if "=" in line
+    )
+    settings = Settings(
+        library_dir=tmp_path / "library",
+        password_hash=values["CRATE_PASSWORD_HASH"],
+        session_secret=values["CRATE_SESSION_SECRET"],
+    )
+    settings.ensure_dirs()
+    with TestClient(create_app(settings)) as client:
+        assert client.get("/api/health").json()["auth"] is True
+        assert client.get("/api/library").status_code == 401
+        client.post("/login", data={"password": "let me in"}, follow_redirects=False)
+        assert client.get("/api/library").status_code == 200

@@ -1,6 +1,7 @@
 """The Crate Digger server."""
 from __future__ import annotations
 
+import logging
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -35,6 +36,14 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         app_state = AppState(settings)
         app.state.crate = app_state
         await app_state.startup()
+        if not settings.password_hash:
+            logging.getLogger("crate").warning(
+                "NO PASSWORD SET — every endpoint is open to anyone who can "
+                "reach %s:%s, and /api/hunt will download for hours on request. "
+                "Fine on your own machine; set one with `crate hashpw --write` "
+                "before this is reachable from anywhere else.",
+                settings.host, settings.port,
+            )
         try:
             yield
         finally:

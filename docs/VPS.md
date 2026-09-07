@@ -60,10 +60,18 @@ bandwidth — `/api/hunt` will happily download for hours. On a public URL with
 no password, anyone who finds it can do that to you.
 
 ```bash
-.venv/bin/crate hashpw          # prints two lines
+.venv/bin/crate hashpw --write   # sets it in .env directly
+sudo systemctl restart crate-api
+curl -s localhost:8770/api/health   # "auth":true
 ```
 
-Paste both into `.env`:
+**Check that `auth` reads `true`.** If it says `false` the password did not take
+— most likely the lines are still commented out, which is exactly what
+`--write` exists to prevent. The app logs a warning on every start when it is
+running without one.
+
+`crate hashpw` on its own prints the two lines instead, if you would rather
+paste them yourself:
 
 ```
 CRATE_PASSWORD_HASH=pbkdf2_sha256$...
