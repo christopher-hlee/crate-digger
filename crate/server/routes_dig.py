@@ -187,7 +187,10 @@ async def hunt_breaks(request: Request, body: HuntIn) -> dict:
             app_state.settings,
             dig=dig, want=body.want, max_examine=body.max_examine,
             max_duration=body.max_duration, min_lift=body.min_lift,
-            min_free_gb=body.min_free_gb,
+            min_free_gb=body.min_free_gb, max_harmonic=body.max_harmonic,
+            require_break=body.require_break,
+            bpm_range=((body.bpm_min, body.bpm_max)
+                       if body.bpm_min and body.bpm_max else None),
             page=body.page, export=body.export, to_export_dir=body.to_export_dir,
         )
         return report.as_dict()

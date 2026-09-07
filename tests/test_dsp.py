@@ -222,3 +222,63 @@ def test_min_context_is_what_rejects_the_start():
     y = _with_lead_in(y, sr)
     assert not any(r["usable"] for r in dsp.find_breaks(y, sr))
     assert any(r["usable"] for r in dsp.find_breaks(y, sr, min_context=0.0))
+
+
+# ── horns are not drums ───────────────────────────────────────────────
+# P/(P+H) rises both when drums come forward and when a broadband horn stab
+# lands, because a saturated brass section is transient and broadband too.
+# Only a fall in *absolute* harmonic energy means the band actually left.
+
+def _band(secs=30, sr=22050, drop=None, horns=None):
+    t = np.arange(int(sr * secs)) / sr
+    y = (0.35 * np.sin(2 * np.pi * 220 * t) + 0.30 * np.sin(2 * np.pi * 277 * t)
+         + 0.25 * np.sin(2 * np.pi * 330 * t))
+    if drop:
+        y[int(drop[0] * sr):int(drop[1] * sr)] *= 0.04
+    if horns:
+        a, b = int(horns[0] * sr), int(horns[1] * sr)
+        y[a:b] *= 2.2
+        y[a:b] += np.random.RandomState(3).randn(b - a) * 0.25
+    for i in range(int(secs / 0.5)):
+        s = int(i * 0.5 * sr)
+        n = int(0.05 * sr)
+        y[s:s + n] += np.random.RandomState(i).randn(n) * np.exp(-np.linspace(0, 7, n)) * 0.55
+    return (y / np.max(np.abs(y)) * 0.9).astype(np.float32), sr
+
+
+def test_a_horn_shout_is_not_a_break():
+    y, sr = _band(horns=(11.0, 19.0))
+    assert not any(r["usable"] for r in dsp.find_breaks(y, sr))
+
+
+def test_the_band_leaving_is_a_break():
+    y, sr = _band(drop=(11.0, 19.0))
+    usable = [r for r in dsp.find_breaks(y, sr) if r["usable"]]
+    assert len(usable) == 1
+    assert usable[0]["harmonic"] < 0.5, "the pitched content must have gone"
+    assert 9.0 < usable[0]["start_sec"] < 13.0
+
+
+def test_harmonic_share_is_what_separates_them():
+    """Relax max_harmonic and the horn shout comes back — proof of which
+    criterion is doing the work."""
+    y, sr = _band(horns=(11.0, 19.0))
+    assert not any(r["usable"] for r in dsp.find_breaks(y, sr))
+    loose = dsp.find_breaks(y, sr, max_harmonic=99.0, min_context=0.0)
+    assert any(r["usable"] for r in loose) or not loose
+
+
+def test_every_region_reports_its_harmonic_share():
+    y, sr = _band(drop=(11.0, 19.0))
+    for region in dsp.find_breaks(y, sr):
+        assert 0.0 <= region["harmonic"]
+        assert isinstance(region["harmonic"], float)
+
+
+def test_percussive_curve_can_return_harmonic_energy():
+    y, sr = _band(drop=(11.0, 19.0))
+    times, ratio, harmonic = dsp.percussive_curve(y, sr, with_harmonic=True)
+    assert times.size == ratio.size == harmonic.size
+    during = harmonic[(times > 12) & (times < 18)].mean()
+    outside = harmonic[(times < 9) | (times > 21)].mean()
+    assert during < outside * 0.5, "harmonic energy must fall during the break"

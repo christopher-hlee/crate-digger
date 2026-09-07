@@ -125,6 +125,9 @@ async def _hunt(settings: Settings, db: Database, args) -> int:
                 db, registry.client, registry, settings, dig=dig,
                 want=args.want, max_examine=args.max_examine,
                 max_duration=args.max_duration, min_lift=args.min_lift,
+                max_harmonic=args.max_harmonic,
+                require_break=not args.no_require_break,
+                bpm_range=tuple(args.bpm) if args.bpm else None,
                 min_free_gb=args.min_free_gb, stopper=stopper,
                 export=not args.no_export,
                 on_progress=lambda m: print(f"  {m}", file=sys.stderr),
@@ -136,8 +139,10 @@ async def _hunt(settings: Settings, db: Database, args) -> int:
         await registry.aclose()
 
     print(f"\n{report.kept} keeper(s) from {report.examined} listened to "
-          f"({report.no_break} had no break, {report.skipped_long} too long, "
-          f"{report.errors} failed)")
+          f"({report.no_break} had no break, {report.off_tempo} off tempo, "
+          f"{report.skipped_long} too long, {report.errors} failed)")
+    for reason, count in sorted(report.failures.items(), key=lambda kv: -kv[1]):
+        print(f"  {count:3d} x {reason}", file=sys.stderr)
     if report.stopped:
         print(f"Stopped early: {report.stopped}. Nothing is lost — the next run "
               f"resumes from here.", file=sys.stderr)
@@ -284,6 +289,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--min-lift", type=float, default=0.08, dest="min_lift")
     p.add_argument("--min-free-gb", type=float, default=5.0, dest="min_free_gb",
                    help="stop when the disk gets this low")
+    p.add_argument("--max-harmonic", type=float, default=0.5, dest="max_harmonic",
+                   help="how much of the record's pitched content may remain (0-1)")
+    p.add_argument("--bpm", nargs=2, type=float, metavar=("MIN", "MAX"),
+                   help="keep only records in this tempo band (half/double counts)")
+    p.add_argument("--no-require-break", action="store_true", dest="no_require_break",
+                   help="keep everything that fits, break or not — chop it yourself")
     p.add_argument("--no-export", action="store_true")
 
     p = sub.add_parser("breaks", help="find the drum-only stretches in a record")

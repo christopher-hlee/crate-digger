@@ -87,7 +87,10 @@ class HuntReport:
     skipped_long: int = 0
     no_break: int = 0
     errors: int = 0
+    off_tempo: int = 0
     stopped: str = ""
+    #: Why records failed, counted — otherwise "13 failed" says nothing.
+    failures: dict = field(default_factory=dict)
     records: list[dict] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
@@ -98,6 +101,8 @@ class HuntReport:
             "skipped_long": self.skipped_long,
             "no_break": self.no_break,
             "errors": self.errors,
+            "off_tempo": self.off_tempo,
+            "failures": self.failures,
             "stopped": self.stopped,
             "records": self.records,
         }
@@ -166,6 +171,9 @@ async def hunt(
     max_pages: int = 12,
     max_duration: float | None = DEFAULT_MAX_DURATION,
     min_lift: float = 0.08,
+    max_harmonic: float = 0.5,
+    require_break: bool = True,
+    bpm_range: tuple[float, float] | None = None,
     rows: int = 30,
     page: int | None = None,
     export: bool = True,
@@ -224,7 +232,9 @@ async def hunt(
         await _work_page(
             leads, db, client, registry, settings, report, seen,
             want=want, max_examine=max_examine, max_duration=max_duration,
-            min_lift=min_lift, export=export, to_export_dir=to_export_dir,
+            min_lift=min_lift, max_harmonic=max_harmonic,
+            require_break=require_break, bpm_range=bpm_range,
+            export=export, to_export_dir=to_export_dir,
             max_export=max_export, min_free_gb=min_free_gb,
             stopper=stopper, say=say,
         )
@@ -254,6 +264,9 @@ async def _work_page(
     max_examine: int,
     max_duration: float | None,
     min_lift: float,
+    max_harmonic: float,
+    require_break: bool,
+    bpm_range: tuple[float, float] | None,
     export: bool,
     to_export_dir: bool,
     max_export: int,
@@ -308,16 +321,32 @@ async def _work_page(
         )
         if row.get("status") != "ready" or not row.get("file_path"):
             report.errors += 1
+            reason = (row.get("error") or "unknown").split(":")[0][:60]
+            report.failures[reason] = report.failures.get(reason, 0) + 1
+            say(f"failed on {track.title[:34]}: {row.get('error') or 'unknown'}")
             if row.get("id"):
                 _discard(db, settings, row)
             continue
 
+        # Tempo filter: the sampling sweet spot is a narrow band, and a record
+        # outside it is not worth the disk whether or not it has a break.
+        if bpm_range and row.get("bpm"):
+            low, high = bpm_range
+            bpm = row["bpm"]
+            # A record at half or double time is the same record to a sampler.
+            if not any(low <= b <= high for b in (bpm, bpm * 2, bpm / 2)):
+                report.off_tempo += 1
+                db.record_verdict(lead.source, lead.source_id, "pass")
+                _discard(db, settings, row)
+                say(f"{track.title[:34]} is {bpm:.0f} BPM — outside the range")
+                continue
+
         # Analysis already looked for breaks; re-gate with this hunt's bar.
         y, sr = CACHE.load(Path(row["file_path"]), sr=22050)
-        regions = dsp.find_breaks(y, sr, min_lift=min_lift)
+        regions = dsp.find_breaks(y, sr, min_lift=min_lift, max_harmonic=max_harmonic)
         db.update_sample(row["id"], breaks=regions)
 
-        if not dsp.has_usable_break(regions):
+        if require_break and not dsp.has_usable_break(regions):
             report.no_break += 1
             db.record_verdict(lead.source, lead.source_id, "pass")
             _discard(db, settings, row)
@@ -326,7 +355,8 @@ async def _work_page(
 
         db.record_verdict(lead.source, lead.source_id, "keep")
         report.kept += 1
-        best = max(regions, key=lambda r: r["lift"])
+        best = (max(regions, key=lambda r: r["lift"]) if regions else
+                {"start_sec": 0.0, "end_sec": 0.0, "lift": 0.0, "usable": False})
         entry = {
             "sample_id": row["id"],
             "title": row.get("title"),
@@ -342,4 +372,6 @@ async def _work_page(
                 to_export_dir=to_export_dir, max_export=max_export,
             )
         report.records.append(entry)
-        say(f"kept {track.title[:40]} — break at {best['start_sec']:.0f}s")
+        say(f"kept {track.title[:40]} — "
+            + (f"break at {best['start_sec']:.0f}s" if best.get("usable")
+               else f"{row.get('bpm') or 0:.0f} BPM, no break — yours to chop"))

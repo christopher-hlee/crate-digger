@@ -891,3 +891,44 @@ def test_the_cli_hunt_path_runs_end_to_end(client, two_records, settings, monkey
     monkeypatch.setattr("crate.config.get_settings", lambda: settings)
     monkeypatch.setattr("crate.cli.get_settings", lambda: settings)
     assert main(["hunt", "breaks", "--want", "1", "--max-examine", "4"]) == 0
+
+
+@respx.mock
+def test_hunt_can_keep_records_without_requiring_a_break(client, two_records):
+    """The manual route: filter to what fits, chop it yourself in the DAW."""
+    mock_seam(*two_records, long_one=False)
+    client.post("/api/hunt", json={"dig": "breaks", "want": 5, "page": 1,
+                                   "require_break": False})
+    report = wait_for_jobs(client, timeout=90)[0]["result"]
+    assert report["kept"] == 2, "both records fit; neither needs a break"
+    assert report["no_break"] == 0
+
+
+@respx.mock
+def test_hunt_filters_by_tempo(client, two_records):
+    mock_seam(*two_records, long_one=False)
+    client.post("/api/hunt", json={
+        "dig": "breaks", "want": 5, "page": 1, "require_break": False,
+        "bpm_min": 200.0, "bpm_max": 210.0})
+    report = wait_for_jobs(client, timeout=90)[0]["result"]
+    assert report["kept"] == 0
+    assert report["off_tempo"] == 2
+    assert client.get("/api/library").json()["total"] == 0
+
+
+@respx.mock
+def test_a_failure_reason_is_counted_not_just_tallied(client, audio_file):
+    respx.get(IA_SEARCH).mock(return_value=httpx.Response(200, json={"response": {
+        "numFound": 1, "docs": [{"identifier": "rec-bad", "title": "Bad",
+                                 "collection": ["georgeblood"]}]}}))
+    respx.get("https://archive.org/metadata/rec-bad").mock(
+        return_value=httpx.Response(200, json={
+            "metadata": {"identifier": "rec-bad"},
+            "files": [{"name": "a.flac", "format": "Flac", "size": "900000",
+                       "length": "0:30"}]}))
+    respx.get("https://archive.org/download/rec-bad/a.flac").mock(
+        return_value=httpx.Response(404))
+    client.post("/api/hunt", json={"dig": "breaks", "want": 1, "page": 1})
+    report = wait_for_jobs(client, timeout=60)[0]["result"]
+    assert report["errors"] == 1
+    assert report["failures"], "a bare count of failures explains nothing"

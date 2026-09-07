@@ -227,8 +227,9 @@ def percussive_curve(
     *,
     smooth_sec: float = 1.5,
     silence_db: float = -32.0,
+    with_harmonic: bool = False,
     hop: int = HOP,
-) -> tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, ...]:
     """Per-frame percussive share of energy, over time.
 
     One HPSS for the whole file, then the ratio frame by frame — separating
@@ -242,7 +243,8 @@ def percussive_curve(
     like the best break on the record.
     """
     if len(y) < N_FFT * 2:
-        return np.zeros(0), np.zeros(0)
+        empty = (np.zeros(0), np.zeros(0))
+        return (*empty, np.zeros(0)) if with_harmonic else empty
 
     harm, perc = hpss(y)
     p = np.sum(perc**2, axis=0)
@@ -258,6 +260,8 @@ def percussive_curve(
     width = max(3, int(smooth_sec * sr / hop))
     ratio = uniform_filter1d(ratio, size=width, mode="nearest")
     times = np.arange(len(ratio)) * hop / sr
+    if with_harmonic:
+        return times, ratio, uniform_filter1d(h, size=width, mode="nearest")
     return times, ratio
 
 
@@ -285,6 +289,8 @@ def find_breaks(
     max_results: int = 5,
     margin: float = 0.06,
     min_lift: float = 0.08,
+    min_score: float = 0.0,
+    max_harmonic: float = 0.5,
     max_coverage: float = 0.6,
     min_context: float = 4.0,
     tail_guard: float = 1.5,
@@ -316,9 +322,11 @@ def find_breaks(
     alone. Requiring `min_context` seconds of playing in front of a region is
     what separates the two; `tail_guard` says the same about the run-out.
     """
-    times, ratio = percussive_curve(y, sr, hop=hop)
+    times, ratio, harmonic = percussive_curve(y, sr, with_harmonic=True, hop=hop)
     if ratio.size < 4:
         return []
+    playing_h = harmonic[ratio > 0]
+    harmonic_baseline = float(np.median(playing_h)) if playing_h.size else 0.0
 
     playing = ratio[ratio > 0]
     baseline = float(np.median(playing)) if playing.size else float(np.median(ratio))
@@ -343,6 +351,12 @@ def find_breaks(
         if end - start < min_length:
             continue
         score = float(np.mean(ratio[a:b]))
+        # How much of the record's pitched content is still here. A drop-out
+        # takes it away; a horn shout brings more of it.
+        harm_share = (
+            float(np.median(harmonic[a:b]) / harmonic_baseline)
+            if harmonic_baseline > 0 else 1.0
+        )
         regions.append(
             {
                 "start_sec": round(float(start), 3),
@@ -350,6 +364,7 @@ def find_breaks(
                 "length_sec": round(float(end - start), 3),
                 "score": round(float(score), 4),
                 "lift": round(float(score - baseline), 4),
+                "harmonic": round(harm_share, 4),
             }
         )
 
@@ -361,6 +376,15 @@ def find_breaks(
         region["usable"] = bool(
             not percussion_record
             and region["lift"] >= min_lift
+            # Off by default. The absolute share depends on the transfer and
+            # the arrangement, and I have no corpus to calibrate it against —
+            # a guessed floor here rejects real breaks as readily as false
+            # ones. `harmonic` below is the criterion that does the work.
+            and region["score"] >= min_score
+            # And the pitched instruments must have *left*. P/(P+H) rises both
+            # when drums come forward and when a broadband horn stab lands; only
+            # a fall in absolute harmonic energy means the band dropped out.
+            and region["harmonic"] <= max_harmonic
             and region["length_sec"] >= min_length
             # There must be a band to have dropped out.
             and region["start_sec"] >= min_context
@@ -368,7 +392,10 @@ def find_breaks(
         )
 
     # Lift first: the drop-out is the thing, not the absolute drum level.
-    regions.sort(key=lambda r: (r["usable"], r["lift"], r["length_sec"]), reverse=True)
+    regions.sort(
+        key=lambda r: (r["usable"], r["score"], -r["harmonic"], r["length_sec"]),
+        reverse=True,
+    )
     return regions[:max_results]
 
 

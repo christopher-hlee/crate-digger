@@ -106,8 +106,13 @@ subjects to make your own.
 
 ## Finding breaks
 
-The thing that makes a break findable is not how loud the drums are — it is
-that they *rise*. A record's percussive share climbs when the horns drop out
+**Two criteria, and the second is the one that matters.** Drums rising is not
+enough: `P/(P+H)` climbs both when the drummer comes forward *and* when a
+saturated horn section lands a broadband stab, so a purely relative measure
+returns horn shouts. What distinguishes a break is that the **pitched
+instruments leave** — absolute harmonic energy falls. Both must hold.
+
+The first criterion is still that they *rise*. A record's percussive share climbs when the horns drop out
 and the drummer is left alone, and that lift is what gets measured, against
 each record's own baseline rather than a fixed threshold. A 1928 shellac reads
 lower everywhere than a 1972 funk 45, so an absolute cutoff finds everything or
@@ -119,6 +124,8 @@ side where the band drops out for four bars is exactly what does qualify.
 
 ```bash
 crate hunt breaks --want 6        # dig, listen, keep only records with breaks
+crate hunt piano-trios --no-require-break --bpm 80 100 --want 20
+                                  # or: keep what fits the tempo, chop it yourself
 crate breaks 12 --export          # find the breaks in one record, write WAVs
 crate ls --breaks 0.5             # what in my crate is drum-forward
 crate rescan --breaks-only        # re-read everything you already have
@@ -128,8 +135,23 @@ Every kept record shows its breaks in a panel: click one to set it as the loop
 region, or export them all. Filter the crate to `has_breaks=true` to browse only
 the records with something to lift out.
 
-Thresholds are guesses until they meet your ears — `--min-lift` on the hunt and
-`min_lift` on the API move the bar.
+Thresholds are guesses until they meet your ears. `--min-lift` sets how far the
+drums must rise; `--max-harmonic` how much of the record's pitched content may
+remain (lower is stricter — 0.5 means half of it must have gone).
+
+There is deliberately no default floor on the absolute drum share: it depends on
+the transfer and the arrangement, and a guessed one rejects real breaks as
+readily as false ones. `--min-score` is there if you want it.
+
+**If break detection is not earning its keep**, skip it. `--no-require-break`
+with `--bpm` keeps whatever sits in the sampling range and leaves the chopping
+to you and the DAW, which is a perfectly good way to work:
+
+```bash
+crate hunt bossa --no-require-break --bpm 85 105 --want 30
+crate hunt piano-trios --no-require-break --bpm 70 95 --want 30
+crate ls --bpm 80 100
+```
 
 ## Somewhere other than your laptop
 

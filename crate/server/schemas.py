@@ -44,6 +44,11 @@ class HuntIn(BaseModel):
     to_export_dir: bool = False
     #: Leave this much disk alone, so a hunt can never starve its neighbours.
     min_free_gb: float = Field(default=5.0, ge=0)
+    max_harmonic: float = Field(default=0.5, ge=0)
+    #: False keeps whatever fits, break or not — chop it in the DAW yourself.
+    require_break: bool = True
+    bpm_min: float | None = Field(default=None, gt=20, le=300)
+    bpm_max: float | None = Field(default=None, gt=20, le=300)
 
 
 class VerdictIn(BaseModel):
