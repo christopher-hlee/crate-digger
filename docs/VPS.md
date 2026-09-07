@@ -121,14 +121,43 @@ probe itself; everything else needs the session cookie or a Bearer token.
 
 ## Behind Caddy
 
-Caddy already terminates TLS for Restock on this box. Add the block in
-`deploy/Caddyfile.snippet`, point a subdomain at the VPS, then:
+Caddy already terminates TLS on this box for Restock. The quickest way to a URL
+is a **port on the hostname you already have** — no DNS, and it reuses the
+certificate Caddy holds:
 
 ```bash
+sudo ufw allow 8443/tcp
+sudo nano /etc/caddy/Caddyfile        # paste Option A from deploy/Caddyfile.snippet
 sudo systemctl reload caddy
 ```
 
+Then it is at `https://<your-host>:8443`. A subdomain is tidier if you own a
+domain — Option B in the same file — but it needs an A record in place first,
+or Caddy cannot get a certificate for it.
+
+**Set the password before either.** `/api/hunt` will download for hours for
+anyone who asks, and a URL on a public host is found eventually:
+
+```bash
+.venv/bin/crate hashpw --write
+sudo systemctl restart crate-api
+curl -s localhost:8770/api/health     # must say "auth":true
+```
+
 The app only ever listens on loopback — Caddy is the only thing exposed.
+
+## No URL? Use a tunnel
+
+If you would rather not expose it at all, forward the port over SSH. **Run this
+on your Mac**, not on the VPS:
+
+```bash
+ssh -L 8770:127.0.0.1:8770 platform@your-vps
+```
+
+Leave that open and the VPS's app answers at `http://127.0.0.1:8770` in your own
+browser. Nothing is exposed and no password is needed, because nothing is
+listening publicly.
 
 ## It does not use Claude credits
 

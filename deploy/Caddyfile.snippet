@@ -1,18 +1,34 @@
-# Add to /etc/caddy/Caddyfile alongside the Restock site.
+# Add to /etc/caddy/Caddyfile alongside the Restock site, then:
+#   sudo systemctl reload caddy
+#
 # Caddy gets the certificate; the app only ever listens on loopback.
+# Pick ONE of the two blocks below.
 
-crate.example.com {
+# ── Option A: a port on the hostname you already have ─────────────────
+# No DNS to set up — it reuses the certificate Caddy already holds for the
+# Restock hostname. Reachable at https://0iu6eih.cserverhost.cloud:8443
+# Open the port first:  sudo ufw allow 8443/tcp
+0iu6eih.cserverhost.cloud:8443 {
     encode zstd gzip
 
-    # Records stream and drag out from here, so allow a generous body and
-    # a long read — a 100 MB FLAC over a slow line is normal.
-    request_body {
-        max_size 200MB
-    }
-
+    # Records stream and drag out from here, so allow a long read: a 100 MB
+    # FLAC over a slow line is normal, not a stall.
     reverse_proxy 127.0.0.1:8770 {
         transport http {
             read_timeout 600s
         }
     }
 }
+
+# ── Option B: its own subdomain ───────────────────────────────────────
+# Nicer, but needs an A record for crate.yourdomain.com pointing at this box
+# before Caddy can get a certificate for it. Delete Option A if you use this.
+#
+# crate.yourdomain.com {
+#     encode zstd gzip
+#     reverse_proxy 127.0.0.1:8770 {
+#         transport http {
+#             read_timeout 600s
+#         }
+#     }
+# }
