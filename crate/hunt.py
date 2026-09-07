@@ -73,16 +73,27 @@ def _discard(db: Database, settings: Settings, row: dict) -> None:
 
 
 def export_breaks(
-    settings: Settings, row: dict, regions: list[dict], *, to_export_dir: bool = False
+    settings: Settings,
+    row: dict,
+    regions: list[dict],
+    *,
+    to_export_dir: bool = False,
+    max_export: int = 2,
 ) -> list[dict]:
-    """Render each usable break to its own WAV."""
+    """Render the best usable breaks to WAV.
+
+    Capped deliberately: five three-second files per record is not a crate,
+    it is clutter. Regions arrive sorted by lift, so the first is the one the
+    record is worth keeping for.
+    """
     path = Path(row["file_path"])
     y, sr = CACHE.load(path)
     stem = library.slugify(
         " ".join(x for x in (row.get("artist"), row.get("title")) if x) or "break"
     )
     written = []
-    for i, region in enumerate(r for r in regions if r.get("usable")):
+    usable = [r for r in regions if r.get("usable")][:max_export]
+    for i, region in enumerate(usable):
         seg = chopper.take(y, sr, region["start_sec"], region["end_sec"])
         name = f"{stem}-break-{i + 1:02d}.wav"
         target = chopper.write_wav(settings.loops_dir / name, seg, sr)
@@ -103,12 +114,14 @@ async def hunt(
     dig,
     want: int = 8,
     max_examine: int = 40,
+    max_pages: int = 12,
     max_duration: float | None = DEFAULT_MAX_DURATION,
     min_lift: float = 0.08,
     rows: int = 30,
     page: int | None = None,
     export: bool = True,
     to_export_dir: bool = False,
+    max_export: int = 2,
     on_progress: Callable[[str], None] | None = None,
 ) -> HuntReport:
     """Work a seam until `want` records with real breaks have been found."""
@@ -123,22 +136,82 @@ async def hunt(
 
     seen = db.seen_ids(dig.source)
     chosen_page = page or digs_module.random_page(dig)
+    visited: set[int] = set()
+    last_page: int | None = None
 
-    try:
-        leads = await source.search(query, **params, rows=rows, page=chosen_page)
+    async def page_of(number: int) -> list[Lead]:
+        nonlocal last_page
+        found = await source.search(query, **params, rows=rows, page=number)
         total = getattr(source, "last_total", 0)
-        if not leads and total:
+        if total:
             last_page = max(1, -(-total // rows))
-            chosen_page = min(chosen_page, last_page)
-            leads = await source.search(query, **params, rows=rows, page=chosen_page)
-    except SourceError as exc:
-        raise
+        return found
 
-    for lead in leads:
+    # A seam is deeper than one page, and most records have no break in them —
+    # so keep turning pages until the target is met rather than giving up on
+    # whatever twenty-five records happened to land first.
+    leads: list[Lead] = []
+    for _ in range(max_pages):
         if report.kept >= want or report.examined >= max_examine:
             break
+        if chosen_page in visited:
+            if last_page and len(visited) < last_page:
+                chosen_page = next(
+                    (n for n in range(1, last_page + 1) if n not in visited), chosen_page
+                )
+            else:
+                break
+        visited.add(chosen_page)
+
+        try:
+            leads = await page_of(chosen_page)
+        except SourceError:
+            raise
+        if not leads and last_page and chosen_page > last_page:
+            chosen_page = max(1, last_page)
+            continue
+        if not leads:
+            break
+
+        await _work_page(
+            leads, db, client, registry, settings, report, seen,
+            want=want, max_examine=max_examine, max_duration=max_duration,
+            min_lift=min_lift, export=export, to_export_dir=to_export_dir,
+            max_export=max_export, say=say,
+        )
+        page += 1 if page else 0
+        chosen_page = (
+            chosen_page + 1 if last_page and chosen_page < last_page
+            else digs_module.random_page(dig)
+        )
+
+    return report
+
+
+async def _work_page(
+    leads: list[Lead],
+    db: Database,
+    client: httpx.AsyncClient,
+    registry,
+    settings: Settings,
+    report: HuntReport,
+    seen: set[str],
+    *,
+    want: int,
+    max_examine: int,
+    max_duration: float | None,
+    min_lift: float,
+    export: bool,
+    to_export_dir: bool,
+    max_export: int,
+    say: Callable[[str], None],
+) -> None:
+    for lead in leads:
+        if report.kept >= want or report.examined >= max_examine:
+            return
         if lead.source_id in seen:
             continue
+        seen.add(lead.source_id)
 
         # An Archive hit is an item; the audio is one level down.
         try:
@@ -197,9 +270,8 @@ async def hunt(
         }
         if export:
             entry["files"] = export_breaks(
-                settings, row, regions, to_export_dir=to_export_dir
+                settings, row, regions,
+                to_export_dir=to_export_dir, max_export=max_export,
             )
         report.records.append(entry)
         say(f"kept {track.title[:40]} — break at {best['start_sec']:.0f}s")
-
-    return report

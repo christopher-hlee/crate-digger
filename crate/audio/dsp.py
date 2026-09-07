@@ -222,13 +222,24 @@ def hpss(y: np.ndarray, *, kernel: int = 17) -> tuple[np.ndarray, np.ndarray]:
 
 
 def percussive_curve(
-    y: np.ndarray, sr: int, *, smooth_sec: float = 1.5, hop: int = HOP
+    y: np.ndarray,
+    sr: int,
+    *,
+    smooth_sec: float = 1.5,
+    silence_db: float = -32.0,
+    hop: int = HOP,
 ) -> tuple[np.ndarray, np.ndarray]:
     """Per-frame percussive share of energy, over time.
 
     One HPSS for the whole file, then the ratio frame by frame — separating
     each window on its own would cost sixty times as much and tell you the
     same thing. Returns ``(times, ratio)`` with ratio in 0..1.
+
+    Quiet frames are forced to zero rather than measured. The ratio is
+    undefined where there is no signal, and noise is spectrally flat, so the
+    lead-in hiss on a 78 transfer scores *higher* than the band does — around
+    0.44 against 0.017 in testing. Left alone it makes every needle drop look
+    like the best break on the record.
     """
     if len(y) < N_FFT * 2:
         return np.zeros(0), np.zeros(0)
@@ -237,6 +248,11 @@ def percussive_curve(
     p = np.sum(perc**2, axis=0)
     h = np.sum(harm**2, axis=0)
     ratio = p / (p + h + 1e-12)
+
+    energy = p + h
+    if energy.size:
+        loud = float(np.percentile(energy, 95)) or 1.0
+        ratio = np.where(energy >= loud * (10.0 ** (silence_db / 10.0)), ratio, 0.0)
 
     # A break is bars long, not frames long, so smooth to that scale.
     width = max(3, int(smooth_sec * sr / hop))
@@ -294,7 +310,8 @@ def find_breaks(
     if ratio.size < 4:
         return []
 
-    baseline = float(np.median(ratio))
+    playing = ratio[ratio > 0]
+    baseline = float(np.median(playing)) if playing.size else float(np.median(ratio))
     threshold = baseline + margin
     hot = ratio >= threshold
     if not hot.any():

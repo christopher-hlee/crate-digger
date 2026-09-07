@@ -10,6 +10,7 @@ from fastapi.staticfiles import StaticFiles
 
 from ..config import Settings, get_settings
 from ..sources.base import SourceError
+from .auth import guard, router as auth_router
 from .deps import AppState
 from .routes_audio import router as audio_router
 from .routes_dig import router as dig_router
@@ -50,6 +51,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def _source_error(_: Request, exc: SourceError) -> JSONResponse:
         return JSONResponse({"detail": str(exc)}, status_code=502)
 
+    app.middleware("http")(guard)
+    app.include_router(auth_router)
     app.include_router(dig_router)
     app.include_router(library_router)
     app.include_router(audio_router)
@@ -64,6 +67,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             "db": str(settings.db_path),
             "fts": app_state.db.has_fts,
             "active_jobs": app_state.jobs.active,
+            "auth": bool(settings.password_hash),
         }
 
     if STATIC_DIR.is_dir():

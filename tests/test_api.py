@@ -669,3 +669,80 @@ def test_has_breaks_filter(client, kept):
     withb = client.get("/api/library?has_breaks=true").json()["total"]
     without = client.get("/api/library?has_breaks=false").json()["total"]
     assert withb + without == total
+
+
+# ── the password gate ─────────────────────────────────────────────────
+# Off for local use; required the moment it answers on a public address,
+# because every endpoint here can spend disk and bandwidth on your behalf.
+
+@pytest.fixture
+def locked_client(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from crate.config import Settings
+    from crate.security import hash_password
+    from crate.server.app import create_app
+
+    settings = Settings(
+        library_dir=tmp_path / "library",
+        password_hash=hash_password("let me in"),
+        session_secret="a-fixed-secret-for-tests",
+        api_key="scripted-access",
+    )
+    settings.ensure_dirs()
+    with TestClient(create_app(settings)) as c:
+        yield c
+
+
+def test_open_by_default(client):
+    assert client.get("/api/library").status_code == 200
+    assert client.get("/api/health").json()["auth"] is False
+
+
+def test_locked_api_refuses_anonymous(locked_client):
+    assert locked_client.get("/api/library").status_code == 401
+    assert locked_client.post("/api/hunt", json={"dig": "breaks"}).status_code == 401
+
+
+def test_locked_pages_redirect_to_login(locked_client):
+    res = locked_client.get("/", follow_redirects=False)
+    assert res.status_code == 303
+    assert res.headers["location"] == "/login"
+    assert locked_client.get("/login").status_code == 200
+
+
+def test_health_and_static_stay_open(locked_client):
+    """A health probe must not need a password, or the box cannot check itself."""
+    assert locked_client.get("/api/health").status_code == 200
+    assert locked_client.get("/api/health").json()["auth"] is True
+    assert locked_client.get("/static/style.css").status_code == 200
+
+
+def test_logging_in_opens_the_crate(locked_client):
+    bad = locked_client.post("/login", data={"password": "nope"},
+                             follow_redirects=False)
+    assert bad.status_code == 401
+    assert locked_client.get("/api/library").status_code == 401
+
+    good = locked_client.post("/login", data={"password": "let me in"},
+                              follow_redirects=False)
+    assert good.status_code == 303
+    assert locked_client.get("/api/library").status_code == 200
+
+    locked_client.post("/logout", follow_redirects=False)
+    assert locked_client.get("/api/library").status_code == 401
+
+
+def test_bearer_token_works_for_scripts(locked_client):
+    assert locked_client.get(
+        "/api/library", headers={"Authorization": "Bearer scripted-access"}
+    ).status_code == 200
+    assert locked_client.get(
+        "/api/library", headers={"Authorization": "Bearer guessed"}
+    ).status_code == 401
+
+
+def test_a_forged_cookie_is_refused(locked_client):
+    locked_client.cookies.set("crate_session", "made.up")
+    assert locked_client.get("/api/library").status_code == 401
+    locked_client.cookies.clear()

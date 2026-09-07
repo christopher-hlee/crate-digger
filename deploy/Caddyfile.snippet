@@ -1,0 +1,18 @@
+# Add to /etc/caddy/Caddyfile alongside the Restock site.
+# Caddy gets the certificate; the app only ever listens on loopback.
+
+crate.example.com {
+    encode zstd gzip
+
+    # Records stream and drag out from here, so allow a generous body and
+    # a long read — a 100 MB FLAC over a slow line is normal.
+    request_body {
+        max_size 200MB
+    }
+
+    reverse_proxy 127.0.0.1:8770 {
+        transport http {
+            read_timeout 600s
+        }
+    }
+}

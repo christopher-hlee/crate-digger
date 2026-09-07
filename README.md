@@ -130,6 +130,19 @@ the records with something to lift out.
 Thresholds are guesses until they meet your ears — `--min-lift` on the hunt and
 `min_lift` on the API move the bar.
 
+## Somewhere other than your laptop
+
+It runs on a server perfectly well, and hunting is the reason to want that —
+it is slow, unattended work. But `CRATE_EXPORT_DIR` writes to the machine
+running the app, so moving it costs you the Ableton folder integration. The
+arrangement that keeps both is to hunt on the server and rsync the breaks down.
+
+**It has no password by default**, because locally there is nothing to log into.
+Set one with `crate hashpw` before it answers on a public address — `/api/hunt`
+will download for hours on request, and that is not something to leave open.
+
+See [`docs/VPS.md`](docs/VPS.md).
+
 ## Command line
 
 ```bash

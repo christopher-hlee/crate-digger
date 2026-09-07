@@ -1,0 +1,23 @@
+[Unit]
+Description=Crate Digger API
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=platform
+WorkingDirectory=/home/platform/crate-digger
+EnvironmentFile=/home/platform/crate-digger/.env
+ExecStart=/home/platform/crate-digger/.venv/bin/uvicorn crate.server.app:app --host 127.0.0.1 --port 8770
+Restart=on-failure
+RestartSec=5
+
+# The app only ever needs its own library folder.
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=read-only
+ReadWritePaths=/home/platform/crate-digger /home/platform/CrateDigger
+
+[Install]
+WantedBy=multi-user.target

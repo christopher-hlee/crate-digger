@@ -180,6 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--reload", action="store_true")
 
     sub.add_parser("digs", help="list the preset digs")
+    sub.add_parser("hashpw", help="hash a password for CRATE_PASSWORD_HASH")
 
     p = sub.add_parser("dig", help="rummage through one seam")
     p.add_argument("slug")
@@ -256,6 +257,20 @@ def main(argv: list[str] | None = None) -> int:
             port=args.port or settings.port,
             reload=args.reload,
         )
+        return 0
+
+    if args.cmd == "hashpw":
+        import getpass
+
+        from .security import hash_password, random_secret
+
+        pw = getpass.getpass("Password: ")
+        if pw != getpass.getpass("Again: "):
+            print("They do not match.", file=sys.stderr)
+            return 1
+        print("\nPut these in your .env:\n")
+        print(f"CRATE_PASSWORD_HASH={hash_password(pw)}")
+        print(f"CRATE_SESSION_SECRET={random_secret()}")
         return 0
 
     if args.cmd == "digs":

@@ -45,6 +45,16 @@ class Settings(BaseSettings):
     http_timeout: float = 30.0
     max_download_mb: int = 120
 
+    # --- access -------------------------------------------------------
+    #: Leave empty for local use. Set it (via `crate hashpw`) and the app
+    #: requires a login — do this before it answers on a public address.
+    password_hash: str | None = None
+    #: Signs the session cookie. Generated per-process when unset, which means
+    #: restarting logs you out; set it in .env for a served install.
+    session_secret: str = ""
+    #: Optional bearer token for scripts and cron.
+    api_key: str | None = None
+
     # --- optional integrations ----------------------------------------
     #: Discogs personal access token. Metadata only (no audio) — used for
     #: crate leads: labels, years, styles, "what else did this drummer play on".
@@ -80,6 +90,12 @@ class Settings(BaseSettings):
     @property
     def loops_dir(self) -> Path:
         return self.library_dir / "loops"
+
+    def model_post_init(self, _context) -> None:
+        if not self.session_secret:
+            from .security import random_secret
+
+            object.__setattr__(self, "session_secret", random_secret())
 
     def ensure_dirs(self) -> None:
         for d in (self.library_dir, self.audio_dir, self.slices_dir, self.loops_dir):

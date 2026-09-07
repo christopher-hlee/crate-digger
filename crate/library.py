@@ -107,8 +107,14 @@ def analyze_file(path: Path | str) -> dict[str, Any]:
     info = decode.probe(path)
     y, sr = decode.load(path, sr=decode.ANALYSIS_SR, mono=True)
 
+    # A truncated or corrupt transfer still opens, and still analyses — it just
+    # analyses the part that survived. Say so rather than reporting confident
+    # numbers for half a record.
+    decoded = len(y) / sr if sr else 0.0
+    damaged = bool(info.duration and decoded < info.duration * 0.9)
+
     result: dict[str, Any] = {
-        "duration": round(info.duration, 3),
+        "duration": round(decoded if damaged else info.duration, 3),
         "sample_rate": info.sample_rate,
         "channels": info.channels,
         "bytes": path.stat().st_size,
@@ -130,6 +136,11 @@ def analyze_file(path: Path | str) -> dict[str, Any]:
         # the analysis window, because the break is rarely in the middle.
         breaks=dsp.find_breaks(y, sr),
     )
+    if damaged:
+        result["notes"] = (
+            f"Damaged transfer: the file claims {info.duration:.0f}s but only "
+            f"{decoded:.0f}s decoded. Analysis covers what survived."
+        )
     return result
 
 

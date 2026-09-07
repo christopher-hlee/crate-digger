@@ -1,0 +1,19 @@
+[Unit]
+Description=Crate Digger — work a seam for drum breaks
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=platform
+WorkingDirectory=/home/platform/crate-digger
+EnvironmentFile=/home/platform/crate-digger/.env
+# Modest per-run target: the timer runs it again, and a slow trickle is kinder
+# to the Archive than hammering it. Adjust WANT/PAGES in .env.
+ExecStart=/bin/bash -lc '.venv/bin/crate hunt "${HUNT_DIG:-breaks}" \
+    --want "${HUNT_WANT:-8}" --max-examine "${HUNT_EXAMINE:-40}" \
+    --min-lift "${HUNT_MIN_LIFT:-0.08}"'
+Nice=10
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=multi-user.target

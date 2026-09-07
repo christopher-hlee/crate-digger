@@ -97,7 +97,8 @@ def make_record_with_a_break(sr=22050, seconds=30, break_from=11.0, break_to=19.
     """A band playing, which drops out to leave the drummer alone."""
     t = np.arange(int(sr * seconds)) / sr
     y = (0.35 * np.sin(2 * np.pi * 220 * t) + 0.3 * np.sin(2 * np.pi * 277 * t))
-    y[int(break_from * sr):int(break_to * sr)] *= 0.06
+    if break_from is not None:
+        y[int(break_from * sr):int(break_to * sr)] *= 0.06
     for i in range(int(seconds / 0.5)):
         start = int(i * 0.5 * sr)
         n = int(0.05 * sr)
@@ -152,3 +153,31 @@ def test_percussive_curve_tracks_the_drop_out():
     during = ratio[(times > 12) & (times < 18)].mean()
     outside = ratio[(times < 9) | (times > 21)].mean()
     assert during > outside
+
+
+def test_lead_in_hiss_is_not_mistaken_for_a_break():
+    """Noise is spectrally flat, so silence scored higher than the band did."""
+    y, sr = make_record_with_a_break(break_from=None, break_to=None)
+    y = y.copy()
+    y[: int(2.0 * sr)] = np.random.RandomState(1).randn(int(2.0 * sr)) * 0.002
+    found = dsp.find_breaks(y, sr)
+    assert not any(r["start_sec"] < 2.5 and r["usable"] for r in found), found
+
+
+def test_a_real_break_still_survives_a_hissy_lead_in():
+    y, sr = make_record_with_a_break()
+    y = y.copy()
+    y[: int(2.0 * sr)] = np.random.RandomState(1).randn(int(2.0 * sr)) * 0.002
+    usable = [r for r in dsp.find_breaks(y, sr) if r["usable"]]
+    assert len(usable) == 1
+    assert usable[0]["start_sec"] > 9.0 and usable[0]["end_sec"] > 17.0
+
+
+def test_quiet_frames_score_zero():
+    sr = 22050
+    y = np.concatenate([
+        np.random.RandomState(0).randn(sr * 3).astype(np.float32) * 0.002,
+        (0.4 * np.sin(2 * np.pi * 220 * np.arange(sr * 5) / sr)).astype(np.float32),
+    ])
+    times, ratio = dsp.percussive_curve(y, sr)
+    assert ratio[times < 2.0].max() == 0.0
