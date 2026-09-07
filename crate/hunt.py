@@ -12,6 +12,8 @@ where the horns drop out for four bars does.
 """
 from __future__ import annotations
 
+import shutil
+import signal
 import time
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -31,6 +33,51 @@ from .sources.base import Lead, SourceError
 #: burns the size cap for nothing.
 DEFAULT_MAX_DURATION = 12 * 60
 
+#: Leave this much of the disk alone. On a box shared with something that
+#: matters, filling the disk is the failure that takes the neighbour down with
+#: you: SQLite cannot write, and a monitor that cannot write is a monitor that
+#: has silently stopped.
+DEFAULT_MIN_FREE_GB = 5.0
+
+
+def free_gb(path) -> float:
+    return shutil.disk_usage(str(path)).free / 1e9
+
+
+class StopRequested(Exception):
+    """SIGTERM arrived — finish the record in hand and put the tools down."""
+
+
+class Stopper:
+    """Turns SIGTERM/SIGINT into a flag checked between records.
+
+    Killing a hunt mid-download leaves a part-file and a half-written row.
+    Between records everything is already committed, so that is where to stop.
+    """
+
+    def __init__(self) -> None:
+        self.stop = False
+        self._previous: dict = {}
+
+    def __enter__(self) -> "Stopper":
+        for sig in (signal.SIGTERM, signal.SIGINT):
+            try:
+                self._previous[sig] = signal.getsignal(sig)
+                signal.signal(sig, self._handle)
+            except ValueError:      # not on the main thread; the API path
+                pass
+        return self
+
+    def _handle(self, *_args) -> None:
+        self.stop = True
+
+    def __exit__(self, *_exc) -> None:
+        for sig, handler in self._previous.items():
+            try:
+                signal.signal(sig, handler)
+            except ValueError:
+                pass
+
 
 @dataclass
 class HuntReport:
@@ -40,6 +87,7 @@ class HuntReport:
     skipped_long: int = 0
     no_break: int = 0
     errors: int = 0
+    stopped: str = ""
     records: list[dict] = field(default_factory=list)
 
     def as_dict(self) -> dict[str, Any]:
@@ -50,6 +98,7 @@ class HuntReport:
             "skipped_long": self.skipped_long,
             "no_break": self.no_break,
             "errors": self.errors,
+            "stopped": self.stopped,
             "records": self.records,
         }
 
@@ -122,6 +171,8 @@ async def hunt(
     export: bool = True,
     to_export_dir: bool = False,
     max_export: int = 2,
+    min_free_gb: float = DEFAULT_MIN_FREE_GB,
+    stopper: "Stopper | None" = None,
     on_progress: Callable[[str], None] | None = None,
 ) -> HuntReport:
     """Work a seam until `want` records with real breaks have been found."""
@@ -177,8 +228,11 @@ async def hunt(
             leads, db, client, registry, settings, report, seen,
             want=want, max_examine=max_examine, max_duration=max_duration,
             min_lift=min_lift, export=export, to_export_dir=to_export_dir,
-            max_export=max_export, say=say,
+            max_export=max_export, min_free_gb=min_free_gb,
+            stopper=stopper, say=say,
         )
+        if report.stopped:
+            break
         page += 1 if page else 0
         chosen_page = (
             chosen_page + 1 if last_page and chosen_page < last_page
@@ -204,10 +258,25 @@ async def _work_page(
     export: bool,
     to_export_dir: bool,
     max_export: int,
+    min_free_gb: float,
+    stopper: "Stopper | None",
     say: Callable[[str], None],
 ) -> None:
     for lead in leads:
         if report.kept >= want or report.examined >= max_examine:
+            return
+        if stopper is not None and stopper.stop:
+            report.stopped = "asked to stop"
+            say("stopping — will pick up here next run")
+            return
+        # Checked per record, not once at the start: a hunt runs for a long
+        # time and the disk it started on is not the disk it ends on.
+        available = free_gb(settings.library_dir)
+        if available < min_free_gb:
+            report.stopped = (
+                f"only {available:.1f} GB free, floor is {min_free_gb:.1f} GB"
+            )
+            say(f"stopping — {report.stopped}")
             return
         if lead.source_id in seen:
             continue

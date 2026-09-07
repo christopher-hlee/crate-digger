@@ -28,6 +28,9 @@ fi
 echo "==> systemd"
 sudo cp deploy/crate-api.service /etc/systemd/system/
 sudo cp deploy/crate-hunt.service deploy/crate-hunt.timer /etc/systemd/system/
+sudo sed -i "s#^ExecStart=/usr/bin/flock -n /tmp/crate-hunt.lock .*#ExecStart=/usr/bin/flock -n /tmp/crate-hunt.lock $APP_DIR/deploy/hunt-run.sh#" \
+    /etc/systemd/system/crate-hunt.service
+chmod +x deploy/hunt-run.sh
 sudo sed -i "s#^WorkingDirectory=.*#WorkingDirectory=$APP_DIR#" \
     /etc/systemd/system/crate-api.service /etc/systemd/system/crate-hunt.service
 sudo systemctl daemon-reload

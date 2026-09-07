@@ -1,19 +1,38 @@
 [Unit]
 Description=Crate Digger — work a seam for drum breaks
 After=network-online.target
+# Never fight the monitor for the box. If Restock is down, this waits.
+After=monitor-api.service
 
 [Service]
 Type=oneshot
 User=platform
 WorkingDirectory=/home/platform/crate-digger
 EnvironmentFile=/home/platform/crate-digger/.env
-# Modest per-run target: the timer runs it again, and a slow trickle is kinder
-# to the Archive than hammering it. Adjust WANT/PAGES in .env.
-ExecStart=/bin/bash -lc '.venv/bin/crate hunt "${HUNT_DIG:-breaks}" \
-    --want "${HUNT_WANT:-8}" --max-examine "${HUNT_EXAMINE:-40}" \
-    --min-lift "${HUNT_MIN_LIFT:-0.08}"'
-Nice=10
+
+# flock: one hunt at a time, ever. A slow run must not be joined by the next
+# tick — two hunts would double the CPU and race on the same records.
+ExecStart=/usr/bin/flock -n /tmp/crate-hunt.lock /home/platform/crate-digger/deploy/hunt-run.sh
+
+# --- being a good neighbour ------------------------------------------------
+# This box exists for the monitor; digging is the hobby running beside it.
+# The monitor's whole value is noticing a drop within seconds, so the hunt is
+# capped hard enough that it cannot delay a poll even while decoding audio.
+CPUQuota=50%
+CPUWeight=20
+MemoryMax=1G
 IOSchedulingClass=idle
+IOWeight=20
+Nice=15
+
+# Stopping is graceful: the hunt finishes the record in hand, commits, exits.
+KillSignal=SIGTERM
+TimeoutStopSec=180
+
+NoNewPrivileges=true
+PrivateTmp=false
+ProtectSystem=full
+ReadWritePaths=/home/platform/crate-digger /home/platform/CrateDigger
 
 [Install]
 WantedBy=multi-user.target

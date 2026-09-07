@@ -765,3 +765,19 @@ def test_rescan_reclassifies_a_stale_break(client, kept, tmp_path):
     client.post(f"/api/samples/{sid}/breaks")
     after = client.get(f"/api/samples/{sid}").json()["breaks"] or []
     assert not any(b["start_sec"] == 0.0 and b["lift"] == 0.36 for b in after)
+
+
+def test_a_hunt_stops_when_the_disk_runs_low(client, two_records, monkeypatch):
+    """Filling a shared box is how a hobby takes its neighbour down."""
+    import crate.hunt as hunt_module
+
+    mock_seam(*two_records, long_one=False)
+    monkeypatch.setattr(hunt_module, "free_gb", lambda _p: 0.2)
+    with respx.mock:
+        mock_seam(*two_records, long_one=False)
+        client.post("/api/hunt", json={"dig": "breaks", "want": 5, "page": 1,
+                                       "min_free_gb": 5.0})
+        report = wait_for_jobs(client, timeout=60)[0]["result"]
+    assert report["kept"] == 0
+    assert "free" in report["stopped"]
+    assert client.get("/api/library").json()["total"] == 0

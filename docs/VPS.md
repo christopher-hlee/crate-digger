@@ -85,6 +85,57 @@ sudo systemctl reload caddy
 
 The app only ever listens on loopback — Caddy is the only thing exposed.
 
+## It does not use Claude credits
+
+Worth saying plainly, because it changes what needs guarding. Crate Digger
+talks to archive.org and to your own disk; Restock talks to Shopify, Target,
+Best Buy and Telegram. Neither imports the Anthropic SDK or holds an API key —
+check `pyproject.toml` and `monitor/requirements.txt` and you will not find one.
+
+Claude credits are spent by the sessions that *write* this code, not by the
+code running. A hunt can run for a week and cost nothing but bandwidth.
+
+What the two apps genuinely compete for is the VPS: CPU, disk and IO. Break
+detection decodes audio and runs median filters over spectrograms, which is the
+heaviest thing either app does — and Restock's whole value is noticing a drop
+within seconds. So the hunt is fenced in, below.
+
+## Keeping out of Restock's way
+
+`crate-hunt.service` is capped so it cannot crowd the monitor:
+
+| | | |
+|---|---|---|
+| `CPUQuota=50%` | never more than half a core | a poll is never waiting on a decode |
+| `CPUWeight=20` / `Nice=15` | monitor wins every contended slice | |
+| `MemoryMax=1G` | hard ceiling | no swap storm |
+| `IOSchedulingClass=idle` | disk reads yield | SQLite writes stay fast |
+| `flock` | one hunt at a time, ever | a slow run is never joined by the next tick |
+
+`deploy/hunt-run.sh` then refuses to start a run at all when:
+
+- **Restock is not answering** its health endpoint — a struggling monitor is the
+  worst moment to add load,
+- **the disk is below the floor** (default 5 GB) — filling it means SQLite
+  cannot write and the monitor silently stops,
+- **load average is over 1.5× the core count** — the box is already busy.
+
+Each check just skips the run. The timer comes back in half an hour.
+
+## Stopping and resuming
+
+Nothing is ever examined twice: every keep and every throw-back is committed to
+SQLite as it happens. So the hunt is resumable by construction — kill it, reboot
+the box, run out of disk, and the next run picks up where it stopped rather than
+starting the seam again.
+
+Stopping is graceful. SIGTERM sets a flag that is checked *between* records, so
+the one in hand finishes and commits first — `systemctl stop crate-hunt` never
+leaves a half-written row or a stray `.part` file.
+
+The disk floor is checked before every single record, not once at the start: a
+hunt runs for hours, and the disk it began on is not the disk it ends on.
+
 ## The hunt timer
 
 ```bash

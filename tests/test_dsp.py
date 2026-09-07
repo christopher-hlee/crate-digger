@@ -181,3 +181,44 @@ def test_quiet_frames_score_zero():
     ])
     times, ratio = dsp.percussive_curve(y, sr)
     assert ratio[times < 2.0].max() == 0.0
+
+
+# ── the needle drop ───────────────────────────────────────────────────
+# Groove crackle is broadband and, on a 78, loud — it scores ~0.45 percussive
+# against ~0.02 for the music, so no threshold on level alone separates them.
+
+def _with_lead_in(y, sr, seconds=2.0, amplitude=0.25):
+    out = y.copy()
+    out[: int(seconds * sr)] = (
+        np.random.RandomState(1).randn(int(seconds * sr)) * amplitude
+    )
+    return out
+
+
+def test_a_loud_needle_drop_is_not_a_break():
+    y, sr = make_record_with_a_break(break_from=None, break_to=None)
+    found = dsp.find_breaks(_with_lead_in(y, sr), sr)
+    assert not any(r["usable"] for r in found), found
+
+
+def test_a_real_break_survives_a_loud_needle_drop():
+    y, sr = make_record_with_a_break()
+    usable = [r for r in dsp.find_breaks(_with_lead_in(y, sr), sr) if r["usable"]]
+    assert len(usable) == 1
+    assert usable[0]["start_sec"] > 9.0
+
+
+def test_run_out_groove_at_the_end_is_not_a_break():
+    y, sr = make_record_with_a_break(break_from=None, break_to=None)
+    y = y.copy()
+    y[-int(2.5 * sr):] = np.random.RandomState(2).randn(int(2.5 * sr)) * 0.25
+    assert not any(r["usable"] for r in dsp.find_breaks(y, sr))
+
+
+def test_min_context_is_what_rejects_the_start():
+    """The guard is structural, not a magic number: relax it and the lead-in
+    comes back, which is the proof it is doing the work."""
+    y, sr = make_record_with_a_break(break_from=None, break_to=None)
+    y = _with_lead_in(y, sr)
+    assert not any(r["usable"] for r in dsp.find_breaks(y, sr))
+    assert any(r["usable"] for r in dsp.find_breaks(y, sr, min_context=0.0))

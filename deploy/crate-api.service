@@ -12,6 +12,11 @@ ExecStart=/home/platform/crate-digger/.venv/bin/uvicorn crate.server.app:app --h
 Restart=on-failure
 RestartSec=5
 
+# The API serves and analyses on request; keep it politely behind the monitor.
+CPUWeight=40
+MemoryMax=1G
+Nice=5
+
 # The app only ever needs its own library folder.
 NoNewPrivileges=true
 PrivateTmp=true

@@ -42,6 +42,8 @@ class HuntIn(BaseModel):
     page: int | None = None
     export: bool = True
     to_export_dir: bool = False
+    #: Leave this much disk alone, so a hunt can never starve its neighbours.
+    min_free_gb: float = Field(default=5.0, ge=0)
 
 
 class VerdictIn(BaseModel):

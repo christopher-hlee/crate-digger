@@ -87,13 +87,15 @@ async def _hunt(settings: Settings, db: Database, args) -> int:
     registry = Registry(settings)
     try:
         print(f"Hunting breaks in {dig.name}…\n")
-        report = await hunt_module.hunt(
-            db, registry.client, registry, settings, dig=dig,
-            want=args.want, max_examine=args.max_examine,
-            max_duration=args.max_duration, min_lift=args.min_lift,
-            export=not args.no_export,
-            on_progress=lambda m: print(f"  {m}", file=sys.stderr),
-        )
+        with hunt_module.Stopper() as stopper:
+            report = await hunt_module.hunt(
+                db, registry.client, registry, settings, dig=dig,
+                want=args.want, max_examine=args.max_examine,
+                max_duration=args.max_duration, min_lift=args.min_lift,
+                min_free_gb=args.min_free_gb, stopper=stopper,
+                export=not args.no_export,
+                on_progress=lambda m: print(f"  {m}", file=sys.stderr),
+            )
     except SourceError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 2
@@ -102,7 +104,11 @@ async def _hunt(settings: Settings, db: Database, args) -> int:
 
     print(f"\n{report.kept} keeper(s) from {report.examined} listened to "
           f"({report.no_break} had no break, {report.skipped_long} too long, "
-          f"{report.errors} failed)\n")
+          f"{report.errors} failed)")
+    if report.stopped:
+        print(f"Stopped early: {report.stopped}. Nothing is lost — the next run "
+              f"resumes from here.", file=sys.stderr)
+    print()
     for entry in report.records:
         b = entry["break"]
         print(f"  [{entry['sample_id']}] {(entry['title'] or '')[:44].ljust(44)}"
@@ -237,6 +243,8 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--max-examine", type=int, default=30, dest="max_examine")
     p.add_argument("--max-duration", type=float, default=720.0, dest="max_duration")
     p.add_argument("--min-lift", type=float, default=0.08, dest="min_lift")
+    p.add_argument("--min-free-gb", type=float, default=5.0, dest="min_free_gb",
+                   help="stop when the disk gets this low")
     p.add_argument("--no-export", action="store_true")
 
     p = sub.add_parser("breaks", help="find the drum-only stretches in a record")

@@ -286,6 +286,8 @@ def find_breaks(
     margin: float = 0.06,
     min_lift: float = 0.08,
     max_coverage: float = 0.6,
+    min_context: float = 4.0,
+    tail_guard: float = 1.5,
     hop: int = HOP,
 ) -> list[dict]:
     """Locate the stretches where the drums are most exposed.
@@ -305,6 +307,14 @@ def find_breaks(
     the horns drop out for four bars is exactly one. ``max_coverage`` enforces
     the same idea from the other side: if the "break" is most of the record,
     the record is a percussion record and there is nothing to lift out.
+
+    ``min_context`` encodes what a break actually *is*: the band dropping out.
+    That requires the band to have been playing first, so a region at the very
+    start of a record has nothing to have dropped out of — it is the needle
+    drop. Groove crackle is broadband and, on a 78, loud, so it scores about
+    0.45 against 0.017 for the music and passes any threshold you set on level
+    alone. Requiring `min_context` seconds of playing in front of a region is
+    what separates the two; `tail_guard` says the same about the run-out.
     """
     times, ratio = percussive_curve(y, sr, hop=hop)
     if ratio.size < 4:
@@ -352,6 +362,9 @@ def find_breaks(
             not percussion_record
             and region["lift"] >= min_lift
             and region["length_sec"] >= min_length
+            # There must be a band to have dropped out.
+            and region["start_sec"] >= min_context
+            and region["end_sec"] <= duration - tail_guard
         )
 
     # Lift first: the drop-out is the thing, not the absolute drum level.
