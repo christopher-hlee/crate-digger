@@ -126,6 +126,9 @@ def analyze_file(path: Path | str) -> dict[str, Any]:
         musical_key=key.key or None,
         key_confidence=key.confidence,
         breakiness=dsp.breakiness(window),
+        # Where the drums run exposed — found across the whole record, not just
+        # the analysis window, because the break is rarely in the middle.
+        breaks=dsp.find_breaks(y, sr),
     )
     return result
 

@@ -457,3 +457,98 @@ def test_a_lead_that_knows_its_own_url_is_not_re_resolved(client, audio_file):
     wait_for_jobs(client)
     assert meta.call_count == 0
     assert client.get("/api/library").json()["total"] == 1
+
+
+# ── digging past the end of a seam ────────────────────────────────────
+# `depth` is only a guess at how far a seam runs. Overshoot it and the archive
+# returns an empty page, not an error — which read as "this seam is empty".
+
+@respx.mock
+def test_a_dig_past_the_end_comes_back_in_range(client):
+    calls = []
+
+    def paged(request):
+        page = int(dict(request.url.params).get("page", 1))
+        calls.append(page)
+        # The seam holds 30 records: two pages of 25, nothing beyond.
+        docs = [] if page > 2 else [
+            {"identifier": f"rec-{page}", "title": f"Record {page}",
+             "collection": ["georgeblood"]}
+        ]
+        return httpx.Response(200, json={"response": {"numFound": 30, "docs": docs}})
+
+    respx.get(IA_SEARCH).mock(side_effect=paged)
+
+    body = client.get("/api/dig/dusty-78s?rows=25&seed=3").json()
+    assert calls[0] > 2, "the dig should have started deep"
+    assert body["count"] == 1, "it should have retried inside the seam"
+    assert body["page"] <= 2
+    assert body["total"] == 30
+
+
+@respx.mock
+def test_a_genuinely_empty_seam_is_not_retried_forever(client):
+    route = respx.get(IA_SEARCH).mock(return_value=httpx.Response(
+        200, json={"response": {"numFound": 0, "docs": []}}))
+    body = client.get("/api/dig/dusty-78s?page=1").json()
+    assert body["count"] == 0
+    assert body["total"] == 0
+    assert route.call_count == 1, "nothing to come back to"
+
+
+@respx.mock
+def test_a_page_where_everything_is_already_judged_says_so(client):
+    respx.get(IA_SEARCH).mock(return_value=httpx.Response(200, json={"response": {
+        "numFound": 1,
+        "docs": [{"identifier": "seen-it", "title": "Seen It",
+                  "collection": ["georgeblood"]}]}}))
+    client.post("/api/verdict", json={
+        "source": "ia", "source_id": "seen-it", "verdict": "pass"})
+    body = client.get("/api/dig/dusty-78s?page=1").json()
+    assert body["count"] == 0
+    assert body["all_seen"] is True
+
+
+@respx.mock
+def test_an_openverse_dig_actually_sends_its_query(client):
+    """`q` was landing in **kwargs and being discarded."""
+    route = respx.get("https://api.openverse.org/v1/audio/").mock(
+        return_value=httpx.Response(200, json={"result_count": 0, "results": []}))
+    client.get("/api/dig/cc-jazz?page=1")
+    sent = dict(route.calls[0].request.url.params)
+    assert sent["q"] == "jazz piano instrumental"
+    assert sent["license_type"] == "commercial,modification"
+
+
+# ── breaks ────────────────────────────────────────────────────────────
+def test_breaks_are_found_at_analysis_time(kept):
+    assert "breaks" in kept
+
+
+def test_detect_and_export_breaks(client, kept, settings):
+    found = client.post(f"/api/samples/{kept['id']}/breaks").json()
+    assert found["count"] == len(found["breaks"])
+    for region in found["breaks"]:
+        assert region["end_sec"] > region["start_sec"]
+        assert 0.0 <= region["score"] <= 1.0
+
+    # Stored on the record, so the panel has them next time it opens.
+    assert client.get(f"/api/samples/{kept['id']}").json()["breaks"] == found["breaks"]
+
+    if not found["count"]:
+        assert client.post(
+            f"/api/samples/{kept['id']}/breaks/export").status_code == 404
+        return
+
+    out = client.post(
+        f"/api/samples/{kept['id']}/breaks/export?to_export_dir=true").json()
+    assert out["count"] == found["count"]
+    for region in out["breaks"]:
+        assert client.get(region["url"]).status_code == 200
+    assert list(Path(settings.export_dir).glob("*break*.wav"))
+
+
+def test_breaks_on_a_lead_with_no_file(client):
+    client.post("/api/youtube", json={"url": "https://youtu.be/dQw4w9WgXcQ"})
+    sid = client.get("/api/library?source=youtube").json()["results"][0]["id"]
+    assert client.post(f"/api/samples/{sid}/breaks").status_code == 409

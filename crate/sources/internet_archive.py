@@ -40,6 +40,9 @@ class InternetArchive:
 
     def __init__(self, client: httpx.AsyncClient):
         self.client = client
+        #: Result count from the most recent search — lets a caller tell
+        #: "this page is past the end" from "this seam is empty".
+        self.last_total = 0
 
     # -- searching ------------------------------------------------------
     @staticmethod
@@ -104,6 +107,7 @@ class InternetArchive:
             raise SourceError("Internet Archive returned a non-JSON response") from exc
 
         docs = (payload.get("response") or {}).get("docs") or []
+        self.last_total = int((payload.get("response") or {}).get("numFound") or 0)
         return [self._to_lead(d) for d in docs]
 
     @staticmethod

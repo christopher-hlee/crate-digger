@@ -11,7 +11,7 @@ import time
 from pathlib import Path
 from typing import Any, Iterable, Sequence
 
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS samples (
@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS samples (
     key_confidence  REAL,
     loudness_db     REAL,
     breakiness      REAL,                       -- percussive/harmonic energy ratio
+    breaks          TEXT,                       -- JSON: where the drums run exposed
     peaks           TEXT,                       -- JSON array of waveform peaks
     status          TEXT NOT NULL DEFAULT 'lead', -- lead|queued|downloading|analyzing|ready|error
     error           TEXT,
@@ -168,6 +169,7 @@ class Database:
 
     def _init(self) -> None:
         self.conn.executescript(SCHEMA)
+        self._migrate()
         try:
             self.conn.executescript(FTS_SCHEMA)
             self.has_fts = True
@@ -178,6 +180,14 @@ class Database:
             "INSERT OR REPLACE INTO meta(key, value) VALUES ('schema_version', ?)",
             (str(SCHEMA_VERSION),),
         )
+        self.conn.commit()
+
+    def _migrate(self) -> None:
+        """Add columns that arrived after a library was first created."""
+        have = {row["name"] for row in self.query("PRAGMA table_info(samples)")}
+        for column, ddl in (("breaks", "TEXT"),):
+            if column not in have:
+                self.conn.execute(f"ALTER TABLE samples ADD COLUMN {column} {ddl}")
         self.conn.commit()
 
     # -- helpers --------------------------------------------------------
@@ -201,8 +211,9 @@ class Database:
         payload.setdefault("status", "lead")
         payload["created_at"] = now
         payload["updated_at"] = now
-        if isinstance(payload.get("peaks"), (list, tuple)):
-            payload["peaks"] = json.dumps(payload["peaks"])
+        for key in ("peaks", "breaks"):
+            if isinstance(payload.get(key), (list, tuple)):
+                payload[key] = json.dumps(payload[key])
         cols = ", ".join(payload)
         marks = ", ".join("?" for _ in payload)
         cur = self.conn.execute(
@@ -221,8 +232,9 @@ class Database:
     def update_sample(self, sample_id: int, **fields: Any) -> None:
         if not fields:
             return
-        if isinstance(fields.get("peaks"), (list, tuple)):
-            fields["peaks"] = json.dumps(fields["peaks"])
+        for key in ("peaks", "breaks"):
+            if isinstance(fields.get(key), (list, tuple)):
+                fields[key] = json.dumps(fields[key])
         fields["updated_at"] = time.time()
         sets = ", ".join(f"{k}=?" for k in fields)
         self.execute(
@@ -253,11 +265,12 @@ class Database:
 def hydrate(row: dict[str, Any]) -> dict[str, Any]:
     """Decode JSON columns for API responses."""
     out = dict(row)
-    if out.get("peaks"):
-        try:
-            out["peaks"] = json.loads(out["peaks"])
-        except (TypeError, ValueError):
-            out["peaks"] = None
+    for key in ("peaks", "breaks"):
+        if out.get(key):
+            try:
+                out[key] = json.loads(out[key])
+            except (TypeError, ValueError):
+                out[key] = None
     out["starred"] = bool(out.get("starred"))
     return out
 

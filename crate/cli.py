@@ -189,6 +189,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--grid", type=float, default=None, metavar="BEATS")
     p.add_argument("--export", action="store_true", help="write WAVs")
 
+    p = sub.add_parser("breaks", help="find the drum-only stretches in a record")
+    p.add_argument("sample_id", type=int)
+    p.add_argument("--export", action="store_true", help="write each one as a WAV")
+
     p = sub.add_parser("loop", help="render a loop, optionally varispeeded")
     p.add_argument("sample_id", type=int)
     p.add_argument("start", type=float)
@@ -288,6 +292,27 @@ def main(argv: list[str] | None = None) -> int:
             print(line)
         print(f"\n{len(slices)} slices" + (f" → {out_dir}" if args.export else ""),
               file=sys.stderr)
+        return 0
+
+    if args.cmd == "breaks":
+        from .audio import dsp
+
+        y22, _ = decode_for_analysis = CACHE.load(path, sr=22050)
+        found = dsp.find_breaks(y22, 22050)
+        stem = library.slugify(row.get("title") or f"sample-{args.sample_id}")
+        for i, region in enumerate(found):
+            line = (f"  {i + 1:2d}  {region['start_sec']:8.2f} → {region['end_sec']:8.2f}"
+                    f"  ({region['length_sec']:6.2f}s)  {region['score'] * 100:5.1f}% drums"
+                    f"  +{region['lift'] * 100:.1f} over this record")
+            if args.export:
+                target = chopper.write_wav(
+                    settings.loops_dir / f"{stem}-break-{i + 1:02d}.wav",
+                    chopper.take(y, sr, region["start_sec"], region["end_sec"]), sr)
+                line += f"\n      {target}"
+            print(line)
+        if not found:
+            print("  no exposed drums found — this one plays all the way through",
+                  file=sys.stderr)
         return 0
 
     if args.cmd == "loop":

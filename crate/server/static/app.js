@@ -110,7 +110,8 @@ function playRange(url, key, start, end) {
 function syncPlayingUi() {
   $$('.card').forEach((c) => c.classList.toggle(
     'is-playing', c.dataset.key === state.playingKey && !player.paused));
-  $('#t-play').textContent = player.paused ? '▶' : '⏸';
+  const mine = !state.current || state.playingKey === leadKey(state.current);
+  $('#t-play').textContent = (player.paused || !mine) ? '▶' : '⏸';
 }
 
 player.addEventListener('play', syncPlayingUi);
@@ -167,8 +168,8 @@ function cardFor(item, { mode }) {
     addBtn(actions, item.sample_id ? '✓ Kept' : 'Keep', 'Download and analyse',
       async (ev) => {
         ev.stopPropagation();
-        await keep(item);
-        el.classList.add('is-kept');
+        ev.currentTarget.disabled = true;
+        await keep(item, el);
       }, Boolean(item.sample_id));
     addBtn(actions, '✕', 'Pass — don’t show me this again', async (ev) => {
       ev.stopPropagation();
@@ -223,11 +224,47 @@ function renderCards(container, items, mode) {
   container.append(frag);
 }
 
-async function keep(item) {
+/* Keep is asynchronous, and an Archive item can expand into several tracks,
+   so the card cannot know its own sample id at click time. Remember the job
+   and reconcile when it lands — otherwise the row still looks like a lead and
+   clicking it shows a streaming preview instead of the waveform you just
+   waited for. */
+const pendingKeeps = new Map();
+
+async function keep(item, cardEl) {
   const res = await api('/api/ingest', { method: 'POST', body: { leads: [stripLead(item)] } });
+  (res.jobs || []).forEach((job) => pendingKeeps.set(job.id, { item, cardEl }));
   toast(`Pulling “${item.title || item.source_id}”…`, 'ok');
   pollJobs();
   return res;
+}
+
+function reconcileKeep(job) {
+  const pending = pendingKeeps.get(job.id);
+  if (!pending) return;
+  pendingKeeps.delete(job.id);
+
+  const samples = job.result?.samples || [];
+  const ready = samples.find((x) => x.sample_id);
+  if (!ready) {
+    toast(`${job.label}: ${job.result?.error || job.error || 'nothing came down'}`, 'err');
+    return;
+  }
+
+  const { item, cardEl } = pending;
+  item.sample_id = ready.sample_id;
+  if (cardEl) {
+    cardEl.classList.add('is-kept');
+    const btn = $$('.card-actions .btn', cardEl).find((b) => /Keep/.test(b.textContent));
+    if (btn) { btn.textContent = '✓ Kept'; btn.disabled = true; }
+  }
+  if (samples.length > 1) toast(`Kept ${samples.length} tracks`, 'ok');
+
+  // If they are looking at this record right now, swap the streaming preview
+  // for the real thing.
+  if (state.current && leadKey(state.current) === leadKey(item)) {
+    openDetail({ ...item, id: ready.sample_id });
+  }
 }
 
 function stripLead(item) {
@@ -393,6 +430,15 @@ async function loadCrates() {
 /* ── detail pane ───────────────────────────────────────────── */
 
 async function openDetail(item) {
+  /* Two records playing over each other is never what you meant, and a
+     transport reading ⏸ for something you have not started is a lie. Stop the
+     previous one — but only when it really is a different record, so clicking
+     the row you are already auditioning does not cut it off. */
+  if (state.playingKey && state.playingKey !== leadKey(item)) {
+    player.pause();
+    state.playingKey = null;
+    syncPlayingUi();
+  }
   state.current = item;
   state.region = null;
   state.slices = [];
@@ -412,6 +458,7 @@ async function openDetail(item) {
   $('#d-star').textContent = row.starred ? '★ Starred' : '☆ Star';
 
   renderBadges(row);
+  renderBreaks(state.sample);
   renderOut(row);
 
   if (state.sample?.file_path) {
@@ -432,6 +479,7 @@ async function openDetail(item) {
     if (track) {
       state.current = { ...item, stream_url: track.stream_url };
       setSource(track.stream_url);
+      syncPlayingUi();
       setWaveNote('Streaming preview — Keep this record to analyse it and draw the waveform');
     } else {
       setWaveNote('No audio on this one — open it at the source');
@@ -482,6 +530,72 @@ function renderBadges(row) {
   if (row.status && row.status !== 'ready') add(esc(row.status), 'rust');
   if (row.error) add(esc(row.error), 'rust');
 }
+
+function renderBreaks(row) {
+  const panel = $('#tool-breaks');
+  const out = $('#breaks-out');
+  const breaks = row?.breaks || [];
+  panel.hidden = !row?.id || !row?.file_path;
+  out.replaceChildren();
+
+  if (!breaks.length) {
+    out.innerHTML = '<p class="muted small">None found yet — press Find breaks.</p>';
+    return;
+  }
+  breaks.forEach((b, i) => {
+    const el = document.createElement('div');
+    el.className = 'break-row';
+    // The absolute share means little on its own — a dusty 1928 shellac reads
+    // lower everywhere than a 1972 funk 45. The lift over this record's own
+    // baseline is what says "the band dropped out here".
+    el.title = `Set this as the loop region — ${Math.round(b.lift * 100)} points `
+      + `above this record's own average`;
+    el.innerHTML = `<span>${i + 1}</span>
+      <span>${fmtTime(b.start_sec)}–${fmtTime(b.end_sec)}</span>
+      <span class="bar"><i style="width:${Math.round(b.score * 100)}%"></i></span>
+      <span>${Math.round(b.score * 100)}% drums</span>
+      <span class="muted">+${Math.round(b.lift * 100)}</span>`;
+    el.addEventListener('click', () => {
+      state.region = { start: b.start_sec, end: b.end_sec };
+      updateRegionLabel();
+      drawWave();
+      playRange(`/api/samples/${row.id}/file`, leadKey(state.current || row),
+                b.start_sec, b.end_sec);
+    });
+    out.append(el);
+  });
+}
+
+$('#breaks-find').addEventListener('click', async () => {
+  const row = state.sample;
+  if (!row?.id) { toast('Keep this record first', 'err'); return; }
+  toast('Listening for drums…');
+  const res = await api(`/api/samples/${row.id}/breaks`, { method: 'POST' });
+  row.breaks = res.breaks;
+  renderBreaks(row);
+  toast(res.count ? `${res.count} break${res.count > 1 ? 's' : ''} found`
+                  : 'No exposed drums on this one', res.count ? 'ok' : '');
+});
+
+$('#breaks-export').addEventListener('click', async () => {
+  const row = state.sample;
+  if (!row?.id) { toast('Keep this record first', 'err'); return; }
+  const daw = $('#loop-daw').checked ? '?to_export_dir=true' : '';
+  const res = await api(`/api/samples/${row.id}/breaks/export${daw}`, { method: 'POST' });
+  res.breaks.forEach((b) => {
+    const el = document.createElement('div');
+    el.className = 'render';
+    el.innerHTML = `<span class="name">${esc(b.filename)}</span>
+      <span class="muted">${Math.round(b.score * 100)}% drums</span>`;
+    const handle = document.createElement('span');
+    handle.className = 'draghandle';
+    handle.textContent = '⠿ drag';
+    makeDraggable(handle, { mime: 'audio/wav', filename: b.filename, url: b.url });
+    el.append(handle);
+    $('#loop-out').prepend(el);
+  });
+  toast(`${res.count} break${res.count > 1 ? 's' : ''} rendered`, 'ok');
+});
 
 function renderOut(row) {
   const handle = $('#drag-whole');
@@ -637,7 +751,12 @@ function updateRegionLabel() {
 }
 
 $('#t-play').addEventListener('click', () => {
-  if (player.paused) player.play().catch(() => {}); else player.pause();
+  if (player.paused) {
+    if (state.current) state.playingKey = leadKey(state.current);
+    player.play().catch(() => {});
+  } else {
+    player.pause();
+  }
 });
 
 /* ── loops ─────────────────────────────────────────────────── */
@@ -863,12 +982,15 @@ async function pollJobs() {
   $('#jobs-chip').hidden = data.active === 0;
   $('#jobs-count').textContent = data.active;
   data.jobs
-    .filter((j) => j.status === 'error' && !reportedJobs.has(j.id))
+    .filter((j) => j.status !== 'queued' && j.status !== 'running')
     .forEach((j) => {
-      reportedJobs.add(j.id);
-      toast(`${j.label}: ${j.error}`, 'err');
+      if (pendingKeeps.has(j.id)) reconcileKeep(j);
+      if (j.status === 'error' && !reportedJobs.has(j.id)) {
+        reportedJobs.add(j.id);
+        toast(`${j.label}: ${j.error}`, 'err');
+      }
     });
-  if (data.active > 0) {
+  if (data.active > 0 || pendingKeeps.size) {
     jobTimer = setTimeout(pollJobs, 1500);
   } else if (state.view === 'crate') {
     loadLibrary();

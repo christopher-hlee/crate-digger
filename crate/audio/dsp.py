@@ -221,6 +221,30 @@ def hpss(y: np.ndarray, *, kernel: int = 17) -> tuple[np.ndarray, np.ndarray]:
     return (harmonic**2 / total) * spec, (percussive**2 / total) * spec
 
 
+def percussive_curve(
+    y: np.ndarray, sr: int, *, smooth_sec: float = 1.5, hop: int = HOP
+) -> tuple[np.ndarray, np.ndarray]:
+    """Per-frame percussive share of energy, over time.
+
+    One HPSS for the whole file, then the ratio frame by frame — separating
+    each window on its own would cost sixty times as much and tell you the
+    same thing. Returns ``(times, ratio)`` with ratio in 0..1.
+    """
+    if len(y) < N_FFT * 2:
+        return np.zeros(0), np.zeros(0)
+
+    harm, perc = hpss(y)
+    p = np.sum(perc**2, axis=0)
+    h = np.sum(harm**2, axis=0)
+    ratio = p / (p + h + 1e-12)
+
+    # A break is bars long, not frames long, so smooth to that scale.
+    width = max(3, int(smooth_sec * sr / hop))
+    ratio = uniform_filter1d(ratio, size=width, mode="nearest")
+    times = np.arange(len(ratio)) * hop / sr
+    return times, ratio
+
+
 def breakiness(y: np.ndarray) -> float:
     """0..1 — how drum-forward this audio is.
 
@@ -235,6 +259,66 @@ def breakiness(y: np.ndarray) -> float:
     if p + h <= 0:
         return 0.0
     return round(float(p / (p + h)), 4)
+
+
+def find_breaks(
+    y: np.ndarray,
+    sr: int,
+    *,
+    min_length: float = 1.5,
+    max_results: int = 5,
+    margin: float = 0.06,
+    hop: int = HOP,
+) -> list[dict]:
+    """Locate the stretches where the drums are most exposed.
+
+    The percussive share of a record is not flat: it climbs when the horns drop
+    out and the drummer is left alone, which is the passage you actually want.
+    Rather than a fixed threshold — hopeless across a 1928 shellac and a 1972
+    funk 45 — this looks for where the ratio runs above *this record's own*
+    average, by ``margin``.
+
+    Returns regions sorted best-first, each with a 0..1 ``score`` (mean
+    percussive share) and ``lift`` (how far above the record's own baseline).
+    """
+    times, ratio = percussive_curve(y, sr, hop=hop)
+    if ratio.size < 4:
+        return []
+
+    baseline = float(np.median(ratio))
+    threshold = baseline + margin
+    hot = ratio >= threshold
+    if not hot.any():
+        return []
+
+    # Contiguous runs above the line.
+    edges = np.diff(hot.astype(np.int8))
+    starts = list(np.flatnonzero(edges == 1) + 1)
+    ends = list(np.flatnonzero(edges == -1) + 1)
+    if hot[0]:
+        starts.insert(0, 0)
+    if hot[-1]:
+        ends.append(len(hot))
+
+    frame_sec = hop / sr
+    regions = []
+    for a, b in zip(starts, ends):
+        start, end = a * frame_sec, b * frame_sec
+        if end - start < min_length:
+            continue
+        score = float(np.mean(ratio[a:b]))
+        regions.append(
+            {
+                "start_sec": round(float(start), 3),
+                "end_sec": round(float(end), 3),
+                "length_sec": round(float(end - start), 3),
+                "score": round(float(score), 4),
+                "lift": round(float(score - baseline), 4),
+            }
+        )
+
+    regions.sort(key=lambda r: (r["score"], r["length_sec"]), reverse=True)
+    return regions[:max_results]
 
 
 def loudness_db(y: np.ndarray) -> float:

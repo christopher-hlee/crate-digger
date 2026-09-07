@@ -89,3 +89,66 @@ def test_varispeed_changes_length_and_pitch_together():
     y, sr = make_audio(seconds=4)
     faster = decode.change_speed(y, 2.0)
     assert len(faster) == pytest.approx(len(y) / 2, rel=0.01)
+
+
+# ── finding the break ─────────────────────────────────────────────────
+
+def make_record_with_a_break(sr=22050, seconds=30, break_from=11.0, break_to=19.0):
+    """A band playing, which drops out to leave the drummer alone."""
+    t = np.arange(int(sr * seconds)) / sr
+    y = (0.35 * np.sin(2 * np.pi * 220 * t) + 0.3 * np.sin(2 * np.pi * 277 * t))
+    y[int(break_from * sr):int(break_to * sr)] *= 0.06
+    for i in range(int(seconds / 0.5)):
+        start = int(i * 0.5 * sr)
+        n = int(0.05 * sr)
+        hit = np.random.RandomState(i).randn(n) * np.exp(-np.linspace(0, 7, n))
+        y[start:start + n] += hit * 0.55
+    return y.astype(np.float32), sr
+
+
+def test_find_breaks_locates_the_drum_only_stretch():
+    y, sr = make_record_with_a_break()
+    found = dsp.find_breaks(y, sr)
+    assert found, "a record with an obvious break should yield one"
+    top = found[0]
+    assert top["start_sec"] < 13.0 and top["end_sec"] > 17.0
+    assert top["lift"] > 0            # above this record's own baseline
+    assert 0.0 <= top["score"] <= 1.0
+
+
+def test_find_breaks_returns_json_safe_scalars():
+    y, sr = make_record_with_a_break()
+    import json
+    assert json.dumps(dsp.find_breaks(y, sr))
+
+
+def test_a_record_that_never_drops_out_has_no_standout_break():
+    """A steady full-band take should not invent a break."""
+    sr = 22050
+    t = np.arange(sr * 20) / sr
+    y = (0.35 * np.sin(2 * np.pi * 220 * t)).astype(np.float32)
+    for i in range(40):
+        s = int(i * 0.5 * sr)
+        n = int(0.05 * sr)
+        y[s:s + n] += np.random.RandomState(i).randn(n) * np.exp(-np.linspace(0, 7, n)) * 0.5
+    found = dsp.find_breaks(y, sr, min_length=3.0)
+    assert all(r["length_sec"] < 15 for r in found)
+
+
+def test_find_breaks_respects_min_length_and_cap():
+    y, sr = make_record_with_a_break()
+    assert dsp.find_breaks(y, sr, min_length=60.0) == []
+    assert len(dsp.find_breaks(y, sr, max_results=1)) <= 1
+
+
+def test_find_breaks_on_something_too_short():
+    assert dsp.find_breaks(np.zeros(500, dtype=np.float32), 22050) == []
+
+
+def test_percussive_curve_tracks_the_drop_out():
+    y, sr = make_record_with_a_break()
+    times, ratio = dsp.percussive_curve(y, sr)
+    assert times.size == ratio.size and times.size > 10
+    during = ratio[(times > 12) & (times < 18)].mean()
+    outside = ratio[(times < 9) | (times > 21)].mean()
+    assert during > outside

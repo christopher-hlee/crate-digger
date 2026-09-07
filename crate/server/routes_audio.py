@@ -224,6 +224,55 @@ async def render_file(request: Request, filename: str):
     return _serve(path, filename, attachment=True)
 
 
+# -- breaks -------------------------------------------------------------
+@router.post("/samples/{sample_id}/breaks")
+async def detect_breaks(request: Request, sample_id: int) -> dict:
+    """Find (or re-find) the stretches where the drums run exposed."""
+    from ..audio import dsp
+
+    _, path = require_audio(request, sample_id)
+
+    def run() -> list[dict]:
+        y, sr = CACHE.load(path, sr=22050)
+        return dsp.find_breaks(y, sr)
+
+    breaks = await asyncio.to_thread(run)
+    state(request).db.update_sample(sample_id, breaks=breaks)
+    return {"count": len(breaks), "breaks": breaks}
+
+
+@router.post("/samples/{sample_id}/breaks/export")
+async def export_breaks(
+    request: Request, sample_id: int, to_export_dir: bool = False
+) -> dict:
+    """Render every detected break to its own WAV — a drum-only crate."""
+    app_state = state(request)
+    row, path = require_audio(request, sample_id)
+    settings = app_state.settings
+
+    breaks = row.get("breaks") or (await detect_breaks(request, sample_id))["breaks"]
+    if not breaks:
+        raise HTTPException(404, "No breaks found on this record.")
+
+    def render() -> list[dict]:
+        y, sr = CACHE.load(path)
+        stem = _nice_name(row)
+        out = []
+        for i, region in enumerate(breaks):
+            seg = chopper.take(y, sr, region["start_sec"], region["end_sec"])
+            name = f"{stem}-break-{i + 1:02d}.wav"
+            target = chopper.write_wav(settings.loops_dir / name, seg, sr)
+            if to_export_dir and settings.export_dir:
+                shutil.copy2(target, Path(settings.export_dir) / name)
+            out.append({**region, "filename": name,
+                        "url": f"/api/renders/{quote(name)}"})
+        return out
+
+    rendered = await asyncio.to_thread(render)
+    return {"count": len(rendered), "breaks": rendered,
+            "exported_to_daw": bool(to_export_dir and settings.export_dir)}
+
+
 # -- getting it into the DAW -------------------------------------------
 @router.post("/samples/{sample_id}/export")
 async def export_to_daw(request: Request, sample_id: int) -> dict:

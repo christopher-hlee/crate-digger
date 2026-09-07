@@ -26,6 +26,7 @@ class Discogs:
     def __init__(self, client: httpx.AsyncClient, *, token: str | None = None):
         self.client = client
         self.token = token
+        self.last_total = 0
 
     @property
     def enabled(self) -> bool:
@@ -70,6 +71,9 @@ class Discogs:
         except ValueError as exc:
             raise SourceError("Discogs returned a non-JSON response") from exc
 
+        self.last_total = int(
+            ((payload.get("pagination") or {}).get("items")) or 0
+        )
         return [self._to_lead(r) for r in payload.get("results") or []]
 
     @staticmethod

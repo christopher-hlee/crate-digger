@@ -74,11 +74,46 @@ def test_fts_index_tracks_updates(db):
 
 
 def test_schema_is_created_once(settings):
+    from crate.db import SCHEMA_VERSION
+
     a = Database(settings.db_path)
     b = Database(settings.db_path)
-    assert b.one("SELECT value FROM meta WHERE key='schema_version'")["value"] == "1"
+    assert b.one("SELECT value FROM meta WHERE key='schema_version'")["value"] == str(
+        SCHEMA_VERSION
+    )
     a.close()
     b.close()
+
+
+def test_an_older_library_gains_the_breaks_column(tmp_path):
+    """Opening a v1 library must migrate it in place, not lose it."""
+    import sqlite3
+
+    from crate.db import FTS_SCHEMA, SCHEMA
+
+    path = tmp_path / "v1.sqlite3"
+    v1 = SCHEMA.replace(
+        "    breaks          TEXT,                       "
+        "-- JSON: where the drums run exposed\n", ""
+    )
+    assert "breaks" not in v1
+    conn = sqlite3.connect(path)
+    conn.executescript(v1)
+    conn.executescript(FTS_SCHEMA)
+    conn.execute(
+        "INSERT INTO samples (source, source_id, title, created_at, updated_at)"
+        " VALUES ('local','/old.wav','An older record',0,0)"
+    )
+    conn.commit()
+    conn.close()
+
+    db = Database(path)
+    assert "breaks" in {r["name"] for r in db.query("PRAGMA table_info(samples)")}
+    row = db.one("SELECT id, title FROM samples")
+    assert row["title"] == "An older record"
+    db.update_sample(row["id"], breaks=[{"start_sec": 12.0, "end_sec": 19.5}])
+    assert db.get_sample(row["id"])["breaks"][0]["end_sec"] == 19.5
+    db.close()
 
 
 def test_tilde_and_vars_in_paths_are_expanded(tmp_path, monkeypatch):

@@ -68,23 +68,49 @@ async def run_dig(
 
     app_state = state(request)
     rng = random.Random(seed)
-    chosen_page = page or digs_module.random_page(dig, rng)
     source = app_state.registry.get(dig.source)
 
+    # `q` is the wire name; the adapters take the query positionally.
+    params = dict(dig.params)
+    query = params.pop("q", params.pop("query", ""))
+
+    async def fetch(on_page: int) -> list:
+        return await source.search(query, **params, rows=rows, page=on_page)
+
+    chosen_page = page or digs_module.random_page(dig, rng)
     try:
-        leads = await source.search(**{**dig.params, "rows": rows, "page": chosen_page})
+        leads = await fetch(chosen_page)
+        total = getattr(source, "last_total", 0)
+
+        # A dig deliberately lands deep, and `depth` is only a guess at how far
+        # a seam runs — overshoot the end and the archive returns an empty page
+        # rather than an error. Now that we know the real size, come back in
+        # range instead of reporting an empty seam.
+        attempts = 0
+        while not leads and total and attempts < 3:
+            last_page = max(1, -(-total // rows))
+            if chosen_page <= last_page and attempts == 0:
+                break              # genuinely nothing on a valid page
+            chosen_page = rng.randint(1, last_page) if page is None else last_page
+            leads = await fetch(chosen_page)
+            total = getattr(source, "last_total", total)
+            attempts += 1
     except SourceError as exc:
         raise HTTPException(502, str(exc)) from exc
 
+    unseen = leads
     if hide_seen:
         seen = app_state.db.seen_ids(dig.source)
-        leads = [l for l in leads if l.source_id not in seen]
+        unseen = [l for l in leads if l.source_id not in seen]
 
     return {
         "dig": dig.as_dict(),
         "page": chosen_page,
-        "count": len(leads),
-        "results": _decorate(app_state, leads),
+        "total": total,
+        "count": len(unseen),
+        #: True when the page had records but you have already judged them all.
+        "all_seen": bool(leads) and not unseen,
+        "results": _decorate(app_state, unseen),
     }
 
 

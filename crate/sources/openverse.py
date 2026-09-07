@@ -23,6 +23,7 @@ class Openverse:
     def __init__(self, client: httpx.AsyncClient, *, token: str | None = None):
         self.client = client
         self.token = token
+        self.last_total = 0
 
     async def search(
         self,
@@ -57,6 +58,7 @@ class Openverse:
         except ValueError as exc:
             raise SourceError("Openverse returned a non-JSON response") from exc
 
+        self.last_total = int(payload.get("result_count") or 0)
         return [self._to_lead(r) for r in payload.get("results") or []]
 
     @staticmethod
