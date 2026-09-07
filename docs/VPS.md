@@ -29,16 +29,47 @@ the results down.
 Hunt on the VPS, mix locally:
 
 1. VPS runs `crate-hunt.timer`, building a crate of breaks.
-2. Your Mac pulls the rendered breaks into the Ableton folder:
+2. Your Mac pulls the rendered breaks into the Ableton folder.
+
+Nothing syncs on its own — `scp` and `rsync` are one-shot copies, and running
+one by hand forever is not a workflow. `deploy/sync-breaks.sh` does the pull;
+a launch agent runs it every fifteen minutes.
+
+**First, keys.** Under a scheduler there is nobody to type a password, so the
+sync must be able to connect without one:
 
 ```bash
-rsync -av --ignore-existing \
-  platform@your-vps:/home/platform/CrateDigger/loops/ \
-  /Users/christopherhlee/Documents/PROJECTS/samples/
+ssh-keygen -t ed25519            # skip if you already have one
+ssh-copy-id platform@your-vps
+ssh platform@your-vps true       # must return silently, no prompt
 ```
 
-Put that on a cron or a Keyboard Maestro trigger and the breaks simply turn up
-in Ableton. You keep the DAW integration and get the unattended digging.
+**Then the agent**, on your Mac:
+
+```bash
+cp deploy/com.cratedigger.sync.plist ~/Library/LaunchAgents/
+# edit it: replace /Users/YOU with your home, and set the remote host
+launchctl load ~/Library/LaunchAgents/com.cratedigger.sync.plist
+```
+
+It runs at login and every fifteen minutes after, pulls only files you do not
+already have, and posts a notification when something arrives — silently when
+nothing does, because an alert every quarter hour saying "nothing" is one you
+learn to swipe away.
+
+```bash
+tail -f ~/Library/Logs/crate-sync.log       # what it has been doing
+deploy/sync-breaks.sh                       # or just pull right now
+launchctl unload ~/Library/LaunchAgents/com.cratedigger.sync.plist   # stop
+```
+
+`--ignore-existing` is deliberate: a break you have already chopped, renamed or
+edited is never overwritten by the copy still sitting on the server.
+
+**If it never fires**, macOS may be blocking writes into `~/Documents`. Either
+grant Full Disk Access to `/bin/bash` under System Settings → Privacy, or point
+`CRATE_LOCAL_DIR` somewhere unprotected like `~/Music/Crate` and add that folder
+to Ableton's browser instead.
 
 ## Install
 

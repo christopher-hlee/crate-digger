@@ -1,0 +1,39 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Pulls new breaks down every 15 minutes while you are logged in.
+  Install:
+    cp deploy/com.cratedigger.sync.plist ~/Library/LaunchAgents/
+    # edit the path below to where you cloned crate-digger
+    launchctl load ~/Library/LaunchAgents/com.cratedigger.sync.plist
+  Stop:
+    launchctl unload ~/Library/LaunchAgents/com.cratedigger.sync.plist
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.cratedigger.sync</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/YOU/workspace/crate-digger/deploy/sync-breaks.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>CRATE_REMOTE</key>
+        <string>platform@74.208.54.100</string>
+        <key>CRATE_LOCAL_DIR</key>
+        <string>/Users/YOU/Documents/PROJECTS/samples</string>
+    </dict>
+
+    <key>StartInterval</key>
+    <integer>900</integer>
+
+    <!-- Catch up once after login rather than waiting a full interval. -->
+    <key>RunAtLoad</key>
+    <true/>
+
+    <key>StandardErrorPath</key>
+    <string>/tmp/crate-sync.err</string>
+</dict>
+</plist>

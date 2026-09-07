@@ -164,6 +164,9 @@ arrangement that keeps both is to hunt on the server and rsync the breaks down.
 Set one with `crate hashpw` before it answers on a public address — `/api/hunt`
 will download for hours on request, and that is not something to leave open.
 
+Breaks come back to your Mac on a fifteen-minute launch agent
+(`deploy/sync-breaks.sh`), so they simply appear in Ableton's browser.
+
 See [`docs/VPS.md`](docs/VPS.md).
 
 ## Command line
