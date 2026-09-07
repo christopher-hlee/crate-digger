@@ -182,6 +182,14 @@ function cardFor(item, { mode }) {
       actions.insertAdjacentHTML('beforeend',
         `<span class="badge ${item.status === 'error' ? 'rust' : ''}">${esc(item.status)}</span>`);
     }
+    const gone = addBtn(actions, '✕', 'Remove from the crate', async (ev) => {
+      ev.stopPropagation();
+      if (await removeSample(item)) {
+        el.remove();
+        loadLibrary();
+      }
+    });
+    gone.classList.add('btn-danger');
   }
 
   $('.play-btn', el).addEventListener('click', async (ev) => {
@@ -488,6 +496,7 @@ async function openDetail(item) {
   $('#d-notes').value = row.notes || '';
   $('#d-source').href = row.page_url || '#';
   $('#d-star').textContent = row.starred ? '★ Starred' : '☆ Star';
+  $('#d-remove').hidden = !state.sample?.id;
 
   renderBadges(row);
   renderBreaks(state.sample);
@@ -1231,4 +1240,38 @@ $('#breaks-refresh').addEventListener('click', loadBreaks);
     clearTimeout(timer);
     timer = setTimeout(loadBreaks, 250);
   });
+});
+
+/* ── removing a record ─────────────────────────────────────── */
+
+async function removeSample(row, { confirmFirst = true } = {}) {
+  const id = row?.id || row?.sample_id;
+  if (!id) return false;
+  const name = row.title || `record ${id}`;
+  if (confirmFirst && !window.confirm(
+    `Remove “${name}” from the crate?\n\n`
+    + 'The downloaded audio, its breaks and any chops are deleted from disk. '
+    + 'Anything you already sent to your DAW folder stays where it is.')) {
+    return false;
+  }
+  // delete_file=true: leaving orphaned audio behind is how a library quietly
+  // fills a disk with records nothing points at any more.
+  await api(`/api/samples/${id}?delete_file=true`, { method: 'DELETE' });
+  toast(`Removed “${name}”`, 'ok');
+
+  if (state.sample?.id === id || state.current?.id === id) {
+    player.pause();
+    $('#detail').hidden = true;
+    state.current = state.sample = null;
+  }
+  return true;
+}
+
+$('#d-remove').addEventListener('click', async () => {
+  const row = state.sample;
+  if (!row?.id) { toast('This is a lead — nothing stored to remove', 'err'); return; }
+  if (await removeSample(row)) {
+    loadLibrary();
+    if (state.view === 'breaks') loadBreaks();
+  }
 });

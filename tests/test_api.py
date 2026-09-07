@@ -996,3 +996,32 @@ def test_keeping_a_break_that_is_not_there(client, kept):
 
 def test_picked_file_path_traversal_is_refused(client):
     assert client.get("/api/picked/..%2F..%2Fcrate.sqlite3").status_code in (400, 404)
+
+
+def test_removing_a_record_takes_its_picks_with_it(client, kept, settings):
+    """A pick left behind keeps syncing to the DAW after its record is gone."""
+    found = client.post(f"/api/samples/{kept['id']}/breaks").json()
+    if not found["count"]:
+        pytest.skip("no break on this fixture")
+    pick = client.post(f"/api/breaks/{kept['id']}/0/pick", json={}).json()
+    kit = client.post(f"/api/samples/{kept['id']}/chop/export",
+                      json={"mode": "grid", "division": 4, "bpm": 90.0}).json()
+    audio = Path(kept["file_path"])
+    picked = Path(pick["path"])
+    slice_file = Path(kit["slices"][0]["file_path"])
+    assert audio.is_file() and picked.is_file() and slice_file.is_file()
+
+    res = client.delete(f"/api/samples/{kept['id']}?delete_file=true").json()
+    assert not audio.exists(), "the record's audio"
+    assert not picked.exists(), "the break you kept"
+    assert not slice_file.exists(), "the chop kit"
+    assert len(res["files_removed"]) >= 3
+    assert client.get("/api/library").json()["total"] == 0
+    assert client.get("/api/breaks").json()["count"] == 0
+
+
+def test_removing_a_record_without_deleting_files(client, kept):
+    audio = Path(kept["file_path"])
+    client.delete(f"/api/samples/{kept['id']}")
+    assert audio.is_file(), "the default must not touch the disk"
+    assert client.get("/api/library").json()["total"] == 0

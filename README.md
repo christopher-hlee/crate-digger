@@ -45,6 +45,9 @@ transients, cuts the loop, and hands the file to your DAW.
   record. Auditioning streams the region out of the source; nothing becomes a
   file until you press Keep. That is the point: the hunt fills a shelf, you
   stand in front of it and choose, and only your choices sync to the DAW.
+- **Remove** — ✕ on a row, or Remove in the detail pane. Deletes the audio, its
+  chops and its kept breaks, and marks the record so a hunt never offers it
+  again. What already reached your DAW folder is left alone.
 - **Chop** — slice at the hits or on a musical grid. Cuts land on zero
   crossings with micro-fades, so one-shots never click. Export writes a
   numbered kit ready to drop on a drum rack.

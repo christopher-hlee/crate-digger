@@ -1,5 +1,17 @@
 # Getting it into the DAW
 
+**Where the app is running decides everything here.** Every export writes to the
+disk of the machine running the server, not the machine running the browser.
+
+| Running on | Keep / Send to DAW folder writes to | Reaches your Mac by |
+|---|---|---|
+| Your Mac | your Mac, straight into `CRATE_EXPORT_DIR` | nothing to do — it is already there |
+| The VPS | the VPS's own disk | `sync-breaks.sh`, or dragging it out |
+
+Drag-out is the exception that works from either: the drag happens in the
+browser on your machine, so the file lands wherever you drop it regardless of
+which box rendered it.
+
 Three routes out. Use whichever fits how you already work.
 
 ## 1. Drag straight from the browser
@@ -48,6 +60,22 @@ Every render and pad has a plain **Save** link. Ordinary download, goes
 wherever your browser puts things.
 
 ---
+
+## Removing what you do not want
+
+A record you have heard and do not want is worth deleting, not just ignoring —
+a hunt left running for a week fills a disk otherwise.
+
+The **✕** on any row in the Crate removes it, and **Remove** in the detail pane
+does the same for the record you have open. Both delete the downloaded audio,
+its chops, and any breaks you kept from it. Anything already synced to your DAW
+folder stays: that copy is yours, and this is not reaching into your samples
+folder to take it back.
+
+The record is also marked as judged, so a hunt will not offer it to you again.
+
+From the command line, `crate ls` to find it and then the API, or just remove it
+in the app — it is one click and it asks first.
 
 ## Working a record
 

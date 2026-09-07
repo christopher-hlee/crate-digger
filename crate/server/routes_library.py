@@ -191,10 +191,14 @@ async def delete_sample(
     row = require_sample(request, sample_id)
     removed = []
     if delete_file:
-        for path in [row.get("file_path")] + [
-            s["file_path"] for s in app_state.db.query(
-                "SELECT file_path FROM slices WHERE sample_id=?", (sample_id,))
-        ]:
+        # Slices and picks are rendered *from* this record, so they outlive it
+        # as orphans otherwise — and picks are the ones that keep syncing.
+        derived = [
+            r["file_path"] for table in ("slices", "picks")
+            for r in app_state.db.query(
+                f"SELECT file_path FROM {table} WHERE sample_id=?", (sample_id,))
+        ]
+        for path in [row.get("file_path"), *derived]:
             if not path:
                 continue
             candidate = Path(path)
