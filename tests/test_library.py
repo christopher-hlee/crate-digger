@@ -1,3 +1,5 @@
+from pathlib import Path
+
 import httpx
 import pytest
 import respx
@@ -210,3 +212,78 @@ async def test_ingest_asks_again_for_a_damaged_transfer(db, settings, audio_file
     assert route.call_count == 2, "it should have asked again"
     assert not row.get("notes"), "the second copy decoded cleanly"
     assert row["status"] == "ready"
+
+
+# ── ffmpeg's complaints ───────────────────────────────────────────────
+# A record with a few corrupt frames decodes to full length and analyses fine.
+# The useful form of that is a note on the record, not six lines of codec
+# chatter every time the file is touched — which on a server is a flooded log.
+
+FFMPEG_NOISE = """[flac @ 0x134007a70] invalid residual
+[flac @ 0x134007a70] decode_frame() failed
+[aist#0:0/flac @ 0x132705390] [dec:flac @ 0x134004cb0] Decoding error: \
+Invalid data found when processing input
+"""
+
+
+def test_recoverable_ffmpeg_errors_become_a_note(tmp_path, monkeypatch):
+    import subprocess
+
+    from crate.audio import decode
+
+    def fake_run(cmd, **kwargs):
+        Path(cmd[-1]).write_bytes(b"")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr=FFMPEG_NOISE)
+
+    monkeypatch.setattr(decode.subprocess, "run", fake_run)
+    warnings: list[str] = []
+    decode._ffmpeg_to_wav(tmp_path / "broken.flac", warnings)
+    assert len(warnings) == 1
+    assert "damaged frames" in warnings[0]
+    assert "3 decoder complaints" in warnings[0]
+    assert "should still be sound" in warnings[0]
+
+
+def test_a_clean_ffmpeg_run_says_nothing(tmp_path, monkeypatch):
+    import subprocess
+
+    from crate.audio import decode
+
+    def fake_run(cmd, **kwargs):
+        Path(cmd[-1]).write_bytes(b"")
+        return subprocess.CompletedProcess(cmd, 0, stdout="", stderr="")
+
+    monkeypatch.setattr(decode.subprocess, "run", fake_run)
+    warnings: list[str] = []
+    decode._ffmpeg_to_wav(tmp_path / "fine.flac", warnings)
+    assert warnings == []
+
+
+def test_ffmpeg_failing_outright_raises(tmp_path, monkeypatch):
+    import subprocess
+
+    from crate.audio import decode
+
+    monkeypatch.setattr(
+        decode.subprocess, "run",
+        lambda cmd, **kw: subprocess.CompletedProcess(cmd, 1, "", "No such file"),
+    )
+    with pytest.raises(RuntimeError, match="ffmpeg could not read"):
+        decode._ffmpeg_to_wav(tmp_path / "gone.flac", [])
+
+
+def test_recovered_frames_do_not_trigger_a_re_download(audio_file, monkeypatch):
+    """Only a *short* decode means ask again — glitched frames are not that."""
+    from crate.audio import decode
+
+    real = decode.load
+
+    def noisy(path, **kwargs):
+        if kwargs.get("warnings") is not None:
+            kwargs["warnings"].append("The source file has damaged frames; ...")
+        return real(path, **{k: v for k, v in kwargs.items() if k != "warnings"})
+
+    monkeypatch.setattr(library.decode, "load", noisy)
+    result = library.analyze_file(audio_file)
+    assert "damaged frames" in result["notes"]
+    assert not result["notes"].startswith("Damaged transfer")

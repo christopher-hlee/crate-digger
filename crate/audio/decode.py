@@ -40,12 +40,37 @@ def have_ffmpeg() -> bool:
     return shutil.which("ffmpeg") is not None
 
 
-def _ffmpeg_to_wav(path: Path) -> Path:
+#: ffmpeg says this, at error level, about frames it recovered from anyway.
+_RECOVERABLE = ("invalid residual", "decode_frame() failed", "Decoding error")
+
+
+def _ffmpeg_to_wav(path: Path, warnings: list[str] | None = None) -> Path:
+    """Salvage a file libsndfile will not open.
+
+    ffmpeg's complaints are captured rather than left to print. A record with a
+    few corrupt frames still decodes to full length and analyses correctly, so
+    the useful form of that information is a note on the record — not six lines
+    of codec chatter every time the file is touched, which on a server is just
+    a flooded log.
+    """
     tmp = Path(tempfile.mkstemp(suffix=".wav")[1])
-    subprocess.run(
+    proc = subprocess.run(
         ["ffmpeg", "-y", "-loglevel", "error", "-i", str(path), "-vn", str(tmp)],
-        check=True,
+        capture_output=True,
+        text=True,
     )
+    stderr = proc.stderr or ""
+    if proc.returncode != 0:
+        tmp.unlink(missing_ok=True)
+        raise RuntimeError(
+            f"ffmpeg could not read {path.name}: {stderr.strip().splitlines()[-1:]}"
+        )
+    if warnings is not None and any(m in stderr for m in _RECOVERABLE):
+        count = sum(stderr.count(m) for m in _RECOVERABLE)
+        warnings.append(
+            f"The source file has damaged frames; ffmpeg recovered it "
+            f"({count} decoder complaints). Analysis should still be sound."
+        )
     return tmp
 
 
@@ -56,6 +81,7 @@ def load(
     mono: bool = True,
     offset: float = 0.0,
     duration: float | None = None,
+    warnings: list[str] | None = None,
 ) -> tuple[np.ndarray, int]:
     """Load audio as float32.
 
@@ -69,7 +95,7 @@ def load(
     except (sf.LibsndfileError, RuntimeError):
         if not have_ffmpeg():
             raise
-        tmp = _ffmpeg_to_wav(path)
+        tmp = _ffmpeg_to_wav(path, warnings)
         try:
             data, file_sr = _read(tmp, offset, duration)
         finally:

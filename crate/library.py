@@ -105,7 +105,10 @@ def analyze_file(path: Path | str) -> dict[str, Any]:
     """Everything we can learn about a file without asking anyone."""
     path = Path(path)
     info = decode.probe(path)
-    y, sr = decode.load(path, sr=decode.ANALYSIS_SR, mono=True)
+    warnings: list[str] = []
+    y, sr = decode.load(
+        path, sr=decode.ANALYSIS_SR, mono=True, warnings=warnings
+    )
 
     # A truncated or corrupt transfer still opens, and still analyses — it just
     # analyses the part that survived. Say so rather than reporting confident
@@ -137,10 +140,12 @@ def analyze_file(path: Path | str) -> dict[str, Any]:
         breaks=dsp.find_breaks(y, sr),
     )
     if damaged:
-        result["notes"] = (
+        warnings.insert(0, (
             f"Damaged transfer: the file claims {info.duration:.0f}s but only "
             f"{decoded:.0f}s decoded. Analysis covers what survived."
-        )
+        ))
+    if warnings:
+        result["notes"] = " ".join(warnings)
     return result
 
 
@@ -201,7 +206,7 @@ async def ingest_lead(
             # record is bad. Ask once more before believing it — at scale this
             # is the difference between a crate of records and a crate of
             # half-records analysed with confidence.
-            if features.get("notes") and retry_damaged:
+            if features.get("notes", "").startswith("Damaged transfer") and retry_damaged:
                 try:
                     again = await download(
                         client, lead.stream_url, dest, stem=stem, max_mb=max_mb

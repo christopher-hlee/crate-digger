@@ -37,7 +37,9 @@ class AudioCache:
                 self._store.move_to_end(key)
                 return hit
 
-        data, rate = decode.load(path, sr=sr, mono=True)
+        # Warnings are swallowed here on purpose: this is the interactive path,
+        # and analyse_file has already recorded anything worth saying.
+        data, rate = decode.load(path, sr=sr, mono=True, warnings=[])
 
         with self._lock:
             self._store[key] = (data, rate)
