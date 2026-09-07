@@ -38,6 +38,7 @@ async def library_list(
     year_min: int | None = None,
     year_max: int | None = None,
     breaks_min: float | None = Query(default=None, ge=0, le=1),
+    has_breaks: bool | None = None,
     starred: bool | None = None,
     crate_id: int | None = None,
     sort: str = "recent",
@@ -85,6 +86,11 @@ async def library_list(
     if starred is not None:
         where.append("s.starred = ?")
         where_params.append(1 if starred else 0)
+    if has_breaks is not None:
+        # A usable break is flagged inside the stored JSON; matching the text
+        # is enough here and avoids a second table for five rows a record.
+        clause = "(s.breaks IS NOT NULL AND s.breaks LIKE '%\"usable\": true%')"
+        where.append(clause if has_breaks else f"NOT {clause}")
 
     sql_where = (" WHERE " + " AND ".join(where)) if where else ""
     order = SORTS.get(sort, SORTS["recent"])

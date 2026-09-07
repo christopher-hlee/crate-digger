@@ -119,12 +119,25 @@ DIGS: list[Dig] = [
     Dig(
         slug="breaks",
         name="Drums & Breaks",
-        blurb="Percussion-forward records. Sort by breakiness once they're analysed.",
+        blurb="Soul, funk and Latin sides — the records a break hides inside. "
+              "Keep one and the break gets found for you.",
         params={
-            "subjects": ["Drum", "Percussion", "Latin Percussion", "Marching Band"],
-            "year_from": 1950, "year_to": 1980,
+            # Searching *for* drums returns records about drums: marching
+            # bands, pipe bands, drum corps. A break is a passage inside a
+            # soul or funk record, so look for those and let the analysis find
+            # the moment the band drops out.
+            "collections": ["unlockedrecordings", "audio_music", "georgeblood"],
+            "subjects": [
+                "Funk", "Soul", "Rhythm and Blues", "Latin", "Afro-Cuban",
+                "Boogaloo", "Jazz-Funk", "Mambo",
+            ],
+            "exclude_subjects": [
+                "Marching Band", "Military", "Bagpipe", "Pipe Band",
+                "Spoken Word", "Radio", "Interview", "Lecture", "Sermon",
+            ],
+            "year_from": 1960, "year_to": 1979,
         },
-        depth=40,
+        depth=60,
     ),
     Dig(
         slug="spoken-word",

@@ -552,3 +552,120 @@ def test_breaks_on_a_lead_with_no_file(client):
     client.post("/api/youtube", json={"url": "https://youtu.be/dQw4w9WgXcQ"})
     sid = client.get("/api/library?source=youtube").json()["results"][0]["id"]
     assert client.post(f"/api/samples/{sid}/breaks").status_code == 409
+
+
+# ── break hunting ─────────────────────────────────────────────────────
+# Pull records from a seam, keep only the ones with a real break, throw the
+# rest back. The keeper test is lift, not drum volume — so a marching band,
+# percussive end to end, never qualifies.
+
+def _record(sr, seconds, *, break_from=None, break_to=None, hit_every=0.5):
+    import numpy as np
+
+    t = np.arange(int(sr * seconds)) / sr
+    y = 0.35 * np.sin(2 * np.pi * 220 * t) + 0.3 * np.sin(2 * np.pi * 277 * t)
+    if break_from is not None:
+        y[int(break_from * sr):int(break_to * sr)] *= 0.05
+    for i in range(int(seconds / hit_every)):
+        start = int(i * hit_every * sr)
+        n = int(0.05 * sr)
+        hit = np.random.RandomState(i).randn(n) * np.exp(-np.linspace(0, 7, n))
+        y[start:start + n] += hit * 0.55
+    return y.astype(np.float32)
+
+
+@pytest.fixture
+def two_records(tmp_path):
+    """One soul side with a break in it; one that plays straight through."""
+    import soundfile as sf
+
+    sr = 22050
+    withb = tmp_path / "with-break.flac"
+    without = tmp_path / "no-break.flac"
+    sf.write(withb, _record(sr, 30, break_from=11.0, break_to=19.0), sr)
+    sf.write(without, _record(sr, 30), sr)
+    return withb.read_bytes(), without.read_bytes()
+
+
+def mock_seam(with_break: bytes, without: bytes, *, long_one: bool = True) -> None:
+    docs = [
+        {"identifier": "rec-good", "title": "Has A Break", "collection": ["georgeblood"]},
+        {"identifier": "rec-plain", "title": "Plays Straight Through",
+         "collection": ["georgeblood"]},
+    ]
+    if long_one:
+        docs.insert(0, {"identifier": "rec-radio", "title": "A Whole Radio Show",
+                        "collection": ["georgeblood"]})
+    respx.get(IA_SEARCH).mock(return_value=httpx.Response(
+        200, json={"response": {"numFound": len(docs), "docs": docs}}))
+
+    def meta(identifier, name, length):
+        respx.get(f"https://archive.org/metadata/{identifier}").mock(
+            return_value=httpx.Response(200, json={
+                "metadata": {"identifier": identifier, "title": identifier},
+                "files": [{"name": name, "format": "Flac", "size": "900000",
+                           "title": identifier, "length": length}]}))
+
+    meta("rec-good", "a.flac", "0:30")
+    meta("rec-plain", "b.flac", "0:30")
+    meta("rec-radio", "c.flac", "58:20")
+    respx.get("https://archive.org/download/rec-good/a.flac").mock(
+        return_value=httpx.Response(200, headers={"content-type": "audio/flac"},
+                                    content=with_break))
+    respx.get("https://archive.org/download/rec-plain/b.flac").mock(
+        return_value=httpx.Response(200, headers={"content-type": "audio/flac"},
+                                    content=without))
+
+
+@respx.mock
+def test_hunt_keeps_only_records_with_a_break(client, two_records, settings):
+    mock_seam(*two_records)
+    client.post("/api/hunt", json={"dig": "breaks", "want": 5, "page": 1})
+    jobs = wait_for_jobs(client, timeout=90)
+    report = jobs[0]["result"]
+
+    assert report["kept"] == 1, report
+    assert report["no_break"] == 1, "the straight-through record must be thrown back"
+    assert report["skipped_long"] == 1, "a 58-minute show is not a sample source"
+
+    entry = report["records"][0]
+    assert entry["break"]["usable"] is True
+    assert entry["break"]["start_sec"] < 13 and entry["break"]["end_sec"] > 17
+
+    # Only the keeper is left in the crate; the reject's file is gone too.
+    rows = client.get("/api/library").json()["results"]
+    assert len(rows) == 1
+    assert Path(rows[0]["file_path"]).is_file()
+    assert not list((settings.audio_dir / "ia").glob("*plain*/*"))
+
+
+@respx.mock
+def test_hunt_exports_the_break_as_a_wav(client, two_records, settings):
+    mock_seam(*two_records, long_one=False)
+    client.post("/api/hunt", json={"dig": "breaks", "want": 5, "page": 1,
+                                   "to_export_dir": True})
+    report = wait_for_jobs(client, timeout=90)[0]["result"]
+    files = report["records"][0]["files"]
+    assert files and Path(files[0]["path"]).is_file()
+    assert list(Path(settings.export_dir).glob("*break*.wav"))
+
+
+@respx.mock
+def test_a_thrown_back_record_is_not_offered_again(client, two_records):
+    mock_seam(*two_records, long_one=False)
+    client.post("/api/hunt", json={"dig": "breaks", "want": 5, "page": 1})
+    wait_for_jobs(client, timeout=90)
+    body = client.get("/api/dig/breaks?page=1").json()
+    assert all(r["source_id"] != "rec-plain" for r in body["results"])
+
+
+def test_hunt_on_an_unknown_dig(client):
+    assert client.post("/api/hunt", json={"dig": "nope"}).status_code == 404
+
+
+def test_has_breaks_filter(client, kept):
+    """Browse only the records with something to lift out."""
+    total = client.get("/api/library").json()["total"]
+    withb = client.get("/api/library?has_breaks=true").json()["total"]
+    without = client.get("/api/library?has_breaks=false").json()["total"]
+    assert withb + without == total

@@ -53,6 +53,7 @@ class InternetArchive:
         year_from: int | None = None,
         year_to: int | None = None,
         subjects: list[str] | None = None,
+        exclude_subjects: list[str] | None = None,
         extra: str = "",
     ) -> str:
         parts = ["mediatype:(audio)"]
@@ -68,6 +69,11 @@ class InternetArchive:
             lo = f"{year_from}-01-01" if year_from else "0001-01-01"
             hi = f"{year_to}-12-31" if year_to else "9999-12-31"
             parts.append(f"date:[{lo} TO {hi}]")
+        if exclude_subjects:
+            # A break lives inside a soul record; searching *for* drums returns
+            # records about drums — marching bands, pipe bands, drum corps.
+            for subject in exclude_subjects:
+                parts.append(f'NOT subject:("{subject}")')
         if extra:
             parts.append(f"({extra})")
         return " AND ".join(parts)
@@ -80,6 +86,7 @@ class InternetArchive:
         year_from: int | None = None,
         year_to: int | None = None,
         subjects: list[str] | None = None,
+        exclude_subjects: list[str] | None = None,
         rows: int = 40,
         page: int = 1,
         sort: str = "downloads desc",
@@ -88,7 +95,8 @@ class InternetArchive:
         params: list[tuple[str, str]] = [
             ("q", self.build_query(
                 query, collections=collections, year_from=year_from,
-                year_to=year_to, subjects=subjects)),
+                year_to=year_to, subjects=subjects,
+                exclude_subjects=exclude_subjects)),
             ("rows", str(max(1, min(rows, 100)))),
             ("page", str(max(1, page))),
             ("output", "json"),

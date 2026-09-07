@@ -228,6 +228,21 @@ kbd {
 .wave-empty[hidden] { display: none; }
 
 .transport { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; }
+
+/* The timeline never depends on the waveform: peaks need the downloaded file,
+   but you always want to know where you are in a record. */
+.timeline { display: flex; align-items: center; gap: 10px; }
+.tl-track {
+  position: relative; flex: 1 1 auto; height: 10px;
+  background: var(--panel-2); border: 1px solid var(--line-2);
+  border-radius: 5px; cursor: pointer; overflow: hidden;
+}
+.tl-fill { position: absolute; inset: 0 auto 0 0; width: 0; background: var(--gold-dim); }
+.tl-region { position: absolute; top: 0; bottom: 0; background: rgba(201,162,39,0.30); }
+.tl-head {
+  position: absolute; top: -3px; bottom: -3px; width: 2px; left: 0;
+  background: var(--ink); border-radius: 1px;
+}
 .detail-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 10px; }
 .detail-title { min-width: 0; }
 .detail-title h2 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }

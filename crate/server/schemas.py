@@ -30,6 +30,20 @@ class IngestIn(BaseModel):
     max_tracks: int = Field(default=6, ge=1, le=50)
 
 
+class HuntIn(BaseModel):
+    """Work a seam and keep only the records with a real break in them."""
+
+    dig: str = "breaks"
+    want: int = Field(default=6, ge=1, le=40)
+    max_examine: int = Field(default=30, ge=1, le=120)
+    #: A 60-minute radio show is never a sample source.
+    max_duration: float | None = Field(default=720.0, gt=0)
+    min_lift: float = Field(default=0.08, ge=0, le=1)
+    page: int | None = None
+    export: bool = True
+    to_export_dir: bool = False
+
+
 class VerdictIn(BaseModel):
     source: str
     source_id: str

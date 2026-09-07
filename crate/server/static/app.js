@@ -115,14 +115,13 @@ function syncPlayingUi() {
 }
 
 player.addEventListener('play', syncPlayingUi);
-player.addEventListener('loadedmetadata', drawWave);
-player.addEventListener('durationchange', drawWave);
+player.addEventListener('loadedmetadata', () => { drawWave(); drawTimeline(); });
+player.addEventListener('durationchange', () => { drawWave(); drawTimeline(); });
 player.addEventListener('pause', syncPlayingUi);
 player.addEventListener('ended', () => { state.playingKey = null; syncPlayingUi(); });
 player.addEventListener('timeupdate', () => {
-  const { currentTime: t, duration: d } = player;
-  $('#t-time').textContent = `${fmtTime(t)} / ${fmtTime(d)}`;
-  if (state.region && $('#t-loop').checked && t >= state.region.end) {
+  drawTimeline();
+  if (state.region && $('#t-loop').checked && player.currentTime >= state.region.end) {
     player.currentTime = state.region.start;
   }
   drawWave();
@@ -356,6 +355,38 @@ async function runDig(slug) {
 
 $('#dig-again').addEventListener('click', () => state.dig && runDig(state.dig));
 
+$('#dig-hunt').addEventListener('click', async () => {
+  const slug = state.dig || 'breaks';
+  const btn = $('#dig-hunt');
+  btn.disabled = true;
+  btn.textContent = 'Hunting…';
+  try {
+    const { job } = await api('/api/hunt', {
+      method: 'POST',
+      body: { dig: slug, want: 6, to_export_dir: $('#loop-daw')?.checked || false },
+    });
+    huntJobs.add(job.id);
+    toast('Listening through the seam — keepers land in your crate', 'ok');
+    pollJobs();
+  } catch {
+    btn.disabled = false;
+    btn.textContent = 'Hunt breaks';
+  }
+});
+
+const huntJobs = new Set();
+
+function reportHunt(job) {
+  huntJobs.delete(job.id);
+  $('#dig-hunt').disabled = false;
+  $('#dig-hunt').textContent = 'Hunt breaks';
+  const r = job.result;
+  if (!r) { toast(job.error || 'The hunt failed', 'err'); return; }
+  toast(`${r.kept} with breaks, out of ${r.examined} listened to`
+        + (r.no_break ? ` · ${r.no_break} thrown back` : ''), r.kept ? 'ok' : '');
+  if (r.kept) { showView('crate'); $('#l-sort').value = 'breaks'; loadLibrary(); }
+}
+
 /* ── search ────────────────────────────────────────────────── */
 
 $('#s-source').addEventListener('change', (e) => {
@@ -460,6 +491,7 @@ async function openDetail(item) {
   renderBadges(row);
   renderBreaks(state.sample);
   renderOut(row);
+  drawTimeline();
 
   if (state.sample?.file_path) {
     setWaveNote('');
@@ -486,6 +518,7 @@ async function openDetail(item) {
     }
   }
   drawWave();
+  drawTimeline();
 }
 
 function setWaveNote(text) {
@@ -630,8 +663,45 @@ const canvas = $('#wave');
 const ctx = canvas.getContext('2d');
 
 function waveDuration() {
-  return state.sample?.duration || player.duration || 0;
+  const known = state.sample?.duration || state.current?.duration;
+  if (known) return known;
+  return Number.isFinite(player.duration) ? player.duration : 0;
 }
+
+/* The timeline is the part that must always work: peaks need the downloaded
+   file, but knowing where you are in a record is not optional. */
+function drawTimeline() {
+  const total = waveDuration();
+  const at = player.currentTime || 0;
+  const pct = total ? Math.min(100, (at / total) * 100) : 0;
+  $('#tl-fill').style.width = `${pct}%`;
+  $('#tl-head').style.left = `${pct}%`;
+  $('#tl-start').textContent = fmtTime(0);
+  $('#tl-end').textContent = total ? fmtTime(total) : '—:—';
+  $('#t-time').textContent = `${fmtTime(at)} / ${total ? fmtTime(total) : '—:—'}`;
+
+  const region = $('#tl-region');
+  if (state.region && total) {
+    region.hidden = false;
+    region.style.left = `${(state.region.start / total) * 100}%`;
+    region.style.width = `${((state.region.end - state.region.start) / total) * 100}%`;
+  } else {
+    region.hidden = true;
+  }
+}
+
+$('#tl-track').addEventListener('pointerdown', (ev) => {
+  const total = waveDuration();
+  if (!total) return;
+  const box = ev.currentTarget.getBoundingClientRect();
+  player.currentTime = Math.max(0, Math.min(total,
+    ((ev.clientX - box.left) / box.width) * total));
+  drawTimeline();
+  if (player.paused) {
+    if (state.current) state.playingKey = leadKey(state.current);
+    player.play().catch(() => {});
+  }
+});
 
 function drawWave() {
   const peaks = state.sample?.peaks;
@@ -741,6 +811,7 @@ canvas.addEventListener('pointerup', (ev) => {
 });
 
 function updateRegionLabel() {
+  drawTimeline();
   const el = $('#t-region');
   if (!state.region) { el.textContent = ''; return; }
   const { start, end } = state.region;
@@ -985,12 +1056,13 @@ async function pollJobs() {
     .filter((j) => j.status !== 'queued' && j.status !== 'running')
     .forEach((j) => {
       if (pendingKeeps.has(j.id)) reconcileKeep(j);
+      if (huntJobs.has(j.id)) reportHunt(j);
       if (j.status === 'error' && !reportedJobs.has(j.id)) {
         reportedJobs.add(j.id);
         toast(`${j.label}: ${j.error}`, 'err');
       }
     });
-  if (data.active > 0 || pendingKeeps.size) {
+  if (data.active > 0 || pendingKeeps.size || huntJobs.size) {
     jobTimer = setTimeout(pollJobs, 1500);
   } else if (state.view === 'crate') {
     loadLibrary();

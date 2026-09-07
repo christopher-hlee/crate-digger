@@ -268,6 +268,8 @@ def find_breaks(
     min_length: float = 1.5,
     max_results: int = 5,
     margin: float = 0.06,
+    min_lift: float = 0.08,
+    max_coverage: float = 0.6,
     hop: int = HOP,
 ) -> list[dict]:
     """Locate the stretches where the drums are most exposed.
@@ -278,8 +280,15 @@ def find_breaks(
     funk 45 — this looks for where the ratio runs above *this record's own*
     average, by ``margin``.
 
-    Returns regions sorted best-first, each with a 0..1 ``score`` (mean
-    percussive share) and ``lift`` (how far above the record's own baseline).
+    Each region carries a 0..1 ``score`` (mean percussive share), a ``lift``
+    (how far above this record's own baseline) and a ``usable`` flag.
+
+    ``usable`` is the one that matters, and it is deliberately about lift
+    rather than loudness of drums. A marching band record is percussive from
+    end to end — high score, no lift — and is not a break; a soul side where
+    the horns drop out for four bars is exactly one. ``max_coverage`` enforces
+    the same idea from the other side: if the "break" is most of the record,
+    the record is a percussion record and there is nothing to lift out.
     """
     times, ratio = percussive_curve(y, sr, hop=hop)
     if ratio.size < 4:
@@ -317,8 +326,24 @@ def find_breaks(
             }
         )
 
-    regions.sort(key=lambda r: (r["score"], r["length_sec"]), reverse=True)
+    total_break = sum(r["length_sec"] for r in regions)
+    duration = float(len(ratio) * frame_sec) or 1.0
+    percussion_record = (total_break / duration) > max_coverage
+
+    for region in regions:
+        region["usable"] = bool(
+            not percussion_record
+            and region["lift"] >= min_lift
+            and region["length_sec"] >= min_length
+        )
+
+    # Lift first: the drop-out is the thing, not the absolute drum level.
+    regions.sort(key=lambda r: (r["usable"], r["lift"], r["length_sec"]), reverse=True)
     return regions[:max_results]
+
+
+def has_usable_break(regions: list[dict]) -> bool:
+    return any(r.get("usable") for r in regions)
 
 
 def loudness_db(y: np.ndarray) -> float:

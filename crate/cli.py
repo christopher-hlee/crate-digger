@@ -77,6 +77,42 @@ async def _dig(settings: Settings, db: Database, args) -> int:
     return 0
 
 
+async def _hunt(settings: Settings, db: Database, args) -> int:
+    from . import hunt as hunt_module
+
+    dig = digs_module.get(args.slug)
+    if not dig:
+        print(f"No dig called {args.slug!r}. Try: crate digs", file=sys.stderr)
+        return 1
+    registry = Registry(settings)
+    try:
+        print(f"Hunting breaks in {dig.name}…\n")
+        report = await hunt_module.hunt(
+            db, registry.client, registry, settings, dig=dig,
+            want=args.want, max_examine=args.max_examine,
+            max_duration=args.max_duration, min_lift=args.min_lift,
+            export=not args.no_export,
+            on_progress=lambda m: print(f"  {m}", file=sys.stderr),
+        )
+    except SourceError as exc:
+        print(f"error: {exc}", file=sys.stderr)
+        return 2
+    finally:
+        await registry.aclose()
+
+    print(f"\n{report.kept} keeper(s) from {report.examined} listened to "
+          f"({report.no_break} had no break, {report.skipped_long} too long, "
+          f"{report.errors} failed)\n")
+    for entry in report.records:
+        b = entry["break"]
+        print(f"  [{entry['sample_id']}] {(entry['title'] or '')[:44].ljust(44)}"
+              f"  break {b['start_sec']:6.1f}-{b['end_sec']:6.1f}s"
+              f"  +{b['lift'] * 100:.0f} over the record")
+        for f in entry.get("files", []):
+            print(f"        {f['path']}")
+    return 0
+
+
 async def _search(settings: Settings, args) -> int:
     registry = Registry(settings)
     try:
@@ -189,6 +225,14 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--grid", type=float, default=None, metavar="BEATS")
     p.add_argument("--export", action="store_true", help="write WAVs")
 
+    p = sub.add_parser("hunt", help="pull records from a seam, keep only ones with breaks")
+    p.add_argument("slug", nargs="?", default="breaks")
+    p.add_argument("--want", type=int, default=6, help="how many keepers to find")
+    p.add_argument("--max-examine", type=int, default=30, dest="max_examine")
+    p.add_argument("--max-duration", type=float, default=720.0, dest="max_duration")
+    p.add_argument("--min-lift", type=float, default=0.08, dest="min_lift")
+    p.add_argument("--no-export", action="store_true")
+
     p = sub.add_parser("breaks", help="find the drum-only stretches in a record")
     p.add_argument("sample_id", type=int)
     p.add_argument("--export", action="store_true", help="write each one as a WAV")
@@ -219,6 +263,8 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {dig.slug.ljust(24)} {dig.name.ljust(26)} {dig.blurb}")
         return 0
 
+    if args.cmd == "hunt":
+        return asyncio.run(_hunt(settings, db, args))
     if args.cmd == "dig":
         return asyncio.run(_dig(settings, db, args))
     if args.cmd == "search":

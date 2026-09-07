@@ -37,6 +37,10 @@ transients, cuts the loop, and hands the file to your DAW.
 - **Analyse** — every record you keep gets a tempo, a key (with its Camelot
   code), loudness, a waveform, and a **breakiness** score: how drum-forward it
   is, so you can sort your crate by "where are the breaks".
+- **Hunt breaks** — one button. It pulls records from a seam, listens to each
+  one, keeps only the ones with a real drum break in them, and throws the rest
+  back — file deleted, marked so the seam stops offering them. The keepers land
+  in your crate with the break already located and rendered as a WAV.
 - **Chop** — slice at the hits or on a musical grid. Cuts land on zero
   crossings with micro-fades, so one-shots never click. Export writes a
   numbered kit ready to drop on a drum rack.
@@ -92,13 +96,39 @@ Logic and Maschine.
 | `gospel` | Choirs, organ, room reverb. Chop the vocal, keep the room. |
 | `strings` | Lush orchestral beds. Pitch them down and they glow. |
 | `organ-rhodes` | Hammond, Wurlitzer, electric piano. |
-| `breaks` | Percussion-forward records. Then sort by breakiness. |
+| `breaks` | Soul, funk and Latin sides — records a break hides inside. |
 | `spoken-word` | Interviews, sermons, old radio. Where interludes come from. |
 | `netlabel-instrumentals` | Modern, Creative Commons, cleared for release. |
 | `cc-jazz` / `cc-drums` | Openly licensed, safe to put out. |
 
 Copy any of them in [`crate/digs.py`](crate/digs.py) and change the years or
 subjects to make your own.
+
+## Finding breaks
+
+The thing that makes a break findable is not how loud the drums are — it is
+that they *rise*. A record's percussive share climbs when the horns drop out
+and the drummer is left alone, and that lift is what gets measured, against
+each record's own baseline rather than a fixed threshold. A 1928 shellac reads
+lower everywhere than a 1972 funk 45, so an absolute cutoff finds everything or
+nothing.
+
+This has a useful consequence: **a marching band never qualifies.** It is
+percussive from end to end, so it has no lift and nothing to lift out. A soul
+side where the band drops out for four bars is exactly what does qualify.
+
+```bash
+crate hunt breaks --want 6        # dig, listen, keep only records with breaks
+crate breaks 12 --export          # find the breaks in one record, write WAVs
+crate ls --breaks 0.5             # what in my crate is drum-forward
+```
+
+Every kept record shows its breaks in a panel: click one to set it as the loop
+region, or export them all. Filter the crate to `has_breaks=true` to browse only
+the records with something to lift out.
+
+Thresholds are guesses until they meet your ears — `--min-lift` on the hunt and
+`min_lift` on the API move the bar.
 
 ## Command line
 

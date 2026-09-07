@@ -7,10 +7,11 @@ from typing import Any
 from fastapi import APIRouter, HTTPException, Query, Request
 
 from .. import digs as digs_module
+from .. import hunt as hunt_module
 from .. import library, ripper
 from ..sources.base import Lead, SourceError
 from .deps import state
-from .schemas import ImportIn, IngestIn, LeadIn, VerdictIn, YouTubeIn
+from .schemas import HuntIn, ImportIn, IngestIn, LeadIn, VerdictIn, YouTubeIn
 
 router = APIRouter(prefix="/api", tags=["dig"])
 
@@ -166,6 +167,32 @@ async def ia_tracks(request: Request, identifier: str) -> dict:
         raise HTTPException(502, str(exc)) from exc
     return {"identifier": identifier, "count": len(leads),
             "results": _decorate(app_state, leads)}
+
+
+@router.post("/hunt")
+async def hunt_breaks(request: Request, body: HuntIn) -> dict:
+    """Pull records from a seam and keep only the ones with a break in them.
+
+    The rest are downloaded, listened to, and thrown back — file deleted, row
+    removed, marked so the seam does not offer them again.
+    """
+    app_state = state(request)
+    dig = digs_module.get(body.dig)
+    if not dig:
+        raise HTTPException(404, f"No dig called {body.dig!r}")
+
+    async def run() -> dict:
+        report = await hunt_module.hunt(
+            app_state.db, app_state.registry.client, app_state.registry,
+            app_state.settings,
+            dig=dig, want=body.want, max_examine=body.max_examine,
+            max_duration=body.max_duration, min_lift=body.min_lift,
+            page=body.page, export=body.export, to_export_dir=body.to_export_dir,
+        )
+        return report.as_dict()
+
+    job = app_state.jobs.submit("hunt", f"Hunting breaks in {dig.name}", run)
+    return {"job": job.as_dict()}
 
 
 @router.post("/verdict")

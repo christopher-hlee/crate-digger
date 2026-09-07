@@ -36,7 +36,10 @@
           <h2 id="dig-name">Pick a seam</h2>
           <p id="dig-blurb" class="muted">Every dig lands on a random page. Page one is what everybody already has.</p>
         </div>
-        <button id="dig-again" class="btn btn-primary" disabled>Dig again</button>
+        <div class="row">
+          <button id="dig-hunt" class="btn" title="Pull records and keep only the ones with a real break">Hunt breaks</button>
+          <button id="dig-again" class="btn btn-primary" disabled>Dig again</button>
+        </div>
       </div>
       <div id="dig-picker" class="dig-picker"></div>
       <div id="dig-results" class="dig-results"></div>
@@ -104,6 +107,16 @@
     <div class="wave-wrap">
       <canvas id="wave" height="150"></canvas>
       <div id="wave-empty" class="wave-empty muted">No waveform yet</div>
+    </div>
+
+    <div class="timeline">
+      <span id="tl-start" class="mono muted">0:00</span>
+      <div class="tl-track" id="tl-track" title="Click to seek">
+        <div class="tl-region" id="tl-region" hidden></div>
+        <div class="tl-fill" id="tl-fill"></div>
+        <div class="tl-head" id="tl-head"></div>
+      </div>
+      <span id="tl-end" class="mono muted">0:00</span>
     </div>
 
     <div class="transport">
