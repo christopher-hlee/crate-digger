@@ -77,6 +77,39 @@ async def _dig(settings: Settings, db: Database, args) -> int:
     return 0
 
 
+async def _refetch(settings: Settings, db: Database, args) -> int:
+    row = db.get_sample(args.sample_id)
+    if not row:
+        print(f"No sample {args.sample_id}", file=sys.stderr)
+        return 1
+    if not row.get("stream_url"):
+        print("That record has no source URL to fetch again.", file=sys.stderr)
+        return 1
+
+    registry = Registry(settings)
+    try:
+        lead = Lead(
+            source=row["source"], source_id=row["source_id"],
+            title=row.get("title") or "", stream_url=row["stream_url"],
+        )
+        old = Path(row["file_path"]) if row.get("file_path") else None
+        if old and old.is_file():
+            old.unlink()
+        db.update_sample(args.sample_id, file_path=None, notes="")
+        fresh = await library.ingest_lead(
+            db, registry.client, lead,
+            audio_dir=settings.audio_dir, max_mb=settings.max_download_mb,
+        )
+    finally:
+        await registry.aclose()
+
+    print(_fmt(fresh))
+    if fresh.get("notes"):
+        print(f"  still damaged: {fresh['notes']}", file=sys.stderr)
+        print("  the copy on the Archive is probably the broken one.", file=sys.stderr)
+    return 0
+
+
 async def _hunt(settings: Settings, db: Database, args) -> int:
     from . import hunt as hunt_module
 
@@ -223,6 +256,9 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--breaks", type=float, metavar="MIN", help="0-1 percussive ratio")
     p.add_argument("--limit", type=int, default=50)
 
+    p = sub.add_parser("refetch", help="download a record again (a damaged transfer)")
+    p.add_argument("sample_id", type=int)
+
     p = sub.add_parser("rescan", help="re-run analysis over everything already downloaded")
     p.add_argument("--breaks-only", action="store_true", dest="breaks_only",
                    help="only redo break detection, keep tempo and key")
@@ -291,6 +327,9 @@ def main(argv: list[str] | None = None) -> int:
             print(f"  {dig.slug.ljust(24)} {dig.name.ljust(26)} {dig.blurb}")
         return 0
 
+    if args.cmd == "refetch":
+        return asyncio.run(_refetch(settings, db, args))
+
     if args.cmd == "rescan":
         from .audio import dsp
 
@@ -330,6 +369,8 @@ def main(argv: list[str] | None = None) -> int:
                 gained += 1
                 mark = "+ "
             title = (row.get("title") or "")[:46].ljust(46)
+            if row.get("notes", "").startswith("Damaged transfer"):
+                mark = "! "
             detail = "no break" if not now else (
                 f"break {found[0]['start_sec']:6.1f}-{found[0]['end_sec']:6.1f}s"
                 f"  +{found[0]['lift'] * 100:.0f}")
@@ -337,6 +378,12 @@ def main(argv: list[str] | None = None) -> int:
 
         print(f"\n{changed} record(s) re-read · {lost} lost a break it never had"
               f" · {gained} gained one", file=sys.stderr)
+        damaged = [r["id"] for r in rows
+                   if (r.get("notes") or "").startswith("Damaged transfer")]
+        if damaged:
+            print(f"! {len(damaged)} damaged transfer(s): "
+                  f"{', '.join(str(i) for i in damaged)} — try `crate refetch <id>`",
+                  file=sys.stderr)
         if lost:
             print("Old renders in loops/ are stale — clear them and export again.",
                   file=sys.stderr)

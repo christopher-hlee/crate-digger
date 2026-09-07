@@ -164,6 +164,7 @@ async def ingest_lead(
     audio_dir: Path,
     max_mb: int = 120,
     analyse: bool = True,
+    retry_damaged: bool = True,
 ) -> dict[str, Any]:
     """Pull a lead down, analyse it, and file it. Idempotent per (source, id)."""
     row = lead.as_sample_row()
@@ -195,7 +196,25 @@ async def ingest_lead(
     db.update_sample(sample_id, file_path=str(path), status="analyzing")
     if analyse:
         try:
-            db.update_sample(sample_id, **analyze_file(path), status="ready", error=None)
+            features = analyze_file(path)
+            # A short read usually means the transfer was cut off, not that the
+            # record is bad. Ask once more before believing it — at scale this
+            # is the difference between a crate of records and a crate of
+            # half-records analysed with confidence.
+            if features.get("notes") and retry_damaged:
+                try:
+                    again = await download(
+                        client, lead.stream_url, dest, stem=stem, max_mb=max_mb
+                    )
+                    retried = analyze_file(again)
+                    if not retried.get("notes"):
+                        path, features = again, retried
+                except (DownloadError, httpx.HTTPError):
+                    pass          # keep what we have; the note says what it is
+            db.update_sample(
+                sample_id, file_path=str(path), **features,
+                status="ready", error=None,
+            )
         except Exception as exc:  # a corrupt transfer shouldn't lose the file
             db.update_sample(
                 sample_id, status="error", error=f"Analysis failed: {exc}"

@@ -152,3 +152,61 @@ async def test_ingest_of_a_lead_with_no_audio_stays_a_lead(db, settings):
         row = await library.ingest_lead(db, client, lead, audio_dir=settings.audio_dir)
     assert row["status"] == "lead"
     assert row["file_path"] is None
+
+
+# ── damaged transfers ─────────────────────────────────────────────────
+# A partly-corrupt FLAC still opens: the header is intact, so the duration
+# reads full, but only part of it decodes. Analysis then reports confident
+# numbers for half a record unless it notices.
+
+def test_a_short_decode_is_reported_not_hidden(audio_file, monkeypatch):
+    from crate.audio import decode
+
+    real = decode.load
+
+    def half(path, **kwargs):
+        y, sr = real(path, **kwargs)
+        return y[: len(y) // 2], sr          # what ffmpeg salvages from a bad file
+
+    monkeypatch.setattr(library.decode, "load", half)
+    result = library.analyze_file(audio_file)
+    assert "Damaged transfer" in result["notes"]
+    assert result["duration"] == pytest.approx(6.0, abs=0.5)   # what survived
+
+
+def test_a_clean_file_carries_no_note(audio_file):
+    assert not library.analyze_file(audio_file).get("notes")
+
+
+@respx.mock
+async def test_ingest_asks_again_for_a_damaged_transfer(db, settings, audio_file):
+    """A truncated download is usually fixed by asking once more."""
+    from crate.audio import decode
+    from crate.sources.base import Lead
+
+    real = decode.load
+    calls = {"n": 0}
+
+    def flaky(path, **kwargs):
+        y, sr = real(path, **kwargs)
+        calls["n"] += 1
+        return (y[: len(y) // 2], sr) if calls["n"] == 1 else (y, sr)
+
+    route = respx.get("https://archive.test/x.flac").mock(
+        return_value=httpx.Response(200, headers={"content-type": "audio/flac"},
+                                    content=audio_file.read_bytes()))
+    import pytest as _pytest
+    monkeypatch = _pytest.MonkeyPatch()
+    monkeypatch.setattr(library.decode, "load", flaky)
+    try:
+        lead = Lead(source="ia", source_id="x", title="X",
+                    stream_url="https://archive.test/x.flac")
+        async with httpx.AsyncClient() as client:
+            row = await library.ingest_lead(
+                db, client, lead, audio_dir=settings.audio_dir)
+    finally:
+        monkeypatch.undo()
+
+    assert route.call_count == 2, "it should have asked again"
+    assert not row.get("notes"), "the second copy decoded cleanly"
+    assert row["status"] == "ready"
