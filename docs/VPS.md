@@ -119,6 +119,26 @@ CRATE_API_KEY=optional-token-for-scripts   # for curl and cron
 Then `sudo systemctl restart crate-api`. `/api/health` stays open so the box can
 probe itself; everything else needs the session cookie or a Bearer token.
 
+## Reaching it from another machine without exposing it
+
+If you only want to browse and add samples from a second machine, an SSH
+tunnel needs no Caddy block, no password and no public URL:
+
+```bash
+ssh -N -L 8770:127.0.0.1:8770 platform@74.208.54.100
+```
+
+Leave that running and open `http://127.0.0.1:8770` on the laptop. The app is
+on the server, so what you add lands in the server's `picked/` and your main
+machine pulls it down with `deploy/sync-breaks.sh` exactly as before.
+
+The service binds `127.0.0.1`, so this is the whole of it — nothing is
+listening on a public interface either way. Worth knowing: this is also the
+fastest way to check whether a problem is the app or the proxy in front of it.
+
+Caddy is still the better answer if you want it from a phone, or from a machine
+without your SSH key. Then read on — and set the password first.
+
 ## Behind Caddy
 
 **Use a path on port 443, not a separate port.** 443 is already open, already
