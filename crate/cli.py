@@ -270,6 +270,11 @@ def main(argv: list[str] | None = None) -> int:
     p = sub.add_parser("rescan", help="re-run analysis over everything already downloaded")
     p.add_argument("--breaks-only", action="store_true", dest="breaks_only",
                    help="only redo break detection, keep tempo and key")
+    p.add_argument("--min-bars", type=float, default=2.0, dest="min_bars",
+                   help="how many bars a break must run to count (default 2)")
+    p.add_argument("--min-steadiness", type=float, default=0.30,
+                   dest="min_steadiness",
+                   help="how regular the pulse must be, 0-1 (default 0.30)")
     p.add_argument("--limit", type=int, default=0, help="stop after N records")
 
     p = sub.add_parser("analyze", help="re-analyse a sample")
@@ -388,7 +393,13 @@ def main(argv: list[str] | None = None) -> int:
             try:
                 if args.breaks_only:
                     y22, _ = CACHE.load(path, sr=22050)
-                    found = dsp.find_breaks(y22, 22050)
+                    # The tempo decides how long two bars is, so it has to come
+                    # along; without it every record falls back to the floor.
+                    found = dsp.find_breaks(
+                        y22, 22050, bpm=row.get("bpm"),
+                        min_bars=args.min_bars,
+                        min_steadiness=args.min_steadiness,
+                    )
                     db.update_sample(row["id"], breaks=found)
                 else:
                     db.update_sample(
@@ -411,9 +422,24 @@ def main(argv: list[str] | None = None) -> int:
             title = (row.get("title") or "")[:46].ljust(46)
             if row.get("notes", "").startswith("Damaged transfer"):
                 mark = "! "
-            detail = "no break" if not now else (
-                f"break {found[0]['start_sec']:6.1f}-{found[0]['end_sec']:6.1f}s"
-                f"  +{found[0]['lift'] * 100:.0f}")
+            if now:
+                best = next(r for r in found if r.get("usable"))
+                detail = (f"break {best['start_sec']:6.1f}-{best['end_sec']:6.1f}s"
+                          f"  {best['length_sec']:5.1f}s"
+                          f"  steady {best['steadiness']:.2f}")
+            elif found:
+                near = found[0]
+                why = []
+                if near["length_sec"] < near.get("min_length_needed", 0):
+                    why.append(f"{near['length_sec']:.1f}s, needs "
+                               f"{near['min_length_needed']:.1f}s")
+                if near["steadiness"] < args.min_steadiness:
+                    why.append(f"pulse {near['steadiness']:.2f}")
+                if near.get("harmonic", 0) > 0.5:
+                    why.append(f"band still playing ({near['harmonic']:.2f})")
+                detail = "no break — " + (", ".join(why) or "nothing stood out")
+            else:
+                detail = "no break"
             print(f"{mark}[{row['id']:4d}] {title} {detail}")
 
         print(f"\n{changed} record(s) re-read · {lost} lost a break it never had"

@@ -324,7 +324,7 @@ def find_breaks(
     y: np.ndarray,
     sr: int,
     *,
-    min_length: float = 1.5,
+    min_length: float = 4.0,
     max_results: int = 5,
     margin: float = 0.06,
     min_lift: float = 0.08,
@@ -422,12 +422,15 @@ def find_breaks(
     duration = float(len(ratio) * frame_sec) or 1.0
     percussion_record = (total_break / duration) > max_coverage
 
-    # Two bars at the record's tempo, or at whatever pulse the region itself
-    # runs at. Anything shorter is a fill you cannot loop.
-    reference = bpm or 0.0
+    # Two bars at the record's tempo. Deliberately NOT the region's own
+    # pulse_bpm: that is usually the eighth-note subdivision, twice the beat,
+    # so asking for "two bars" of it asks for one — which is how 2.4 seconds
+    # once passed a two-bar test. With no tempo to work from, fall back to the
+    # flat floor rather than to a number derived from the thing being judged.
     for region in regions:
-        pulse = reference or region.get("pulse_bpm") or 0.0
-        needed = max(min_length, (60.0 / pulse) * 4 * min_bars) if pulse else min_length
+        needed = (
+            max(min_length, (60.0 / bpm) * 4 * min_bars) if bpm else min_length
+        )
         region["min_length_needed"] = round(float(needed), 2)
         region["usable"] = bool(
             not percussion_record

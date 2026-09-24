@@ -215,13 +215,13 @@ def test_run_out_groove_at_the_end_is_not_a_break():
     assert not any(r["usable"] for r in dsp.find_breaks(y, sr))
 
 
-def test_the_lead_in_is_rejected_twice_over():
-    """Two independent tests catch a needle drop, which is why it stays out.
+def test_the_lead_in_is_rejected_several_times_over():
+    """Three independent tests catch a needle drop, which is why it stays out.
 
-    It is at the start of the record, so `min_context` rejects it; and groove
-    crackle has no pulse, so `min_steadiness` rejects it too. Relaxing either
-    alone still leaves it out — it takes both, which is what makes this robust
-    rather than one tuned constant.
+    It is at the start of the record, so `min_context` rejects it; groove
+    crackle has no pulse, so `min_steadiness` does; and it is too short to
+    loop, so the length floor does. Relaxing any one alone leaves it out.
+    That redundancy is the point — no single tuned constant is load-bearing.
     """
     y, sr = make_record_with_a_break(break_from=None, break_to=None)
     y = _with_lead_in(y, sr)
@@ -230,8 +230,12 @@ def test_the_lead_in_is_rejected_twice_over():
     assert not any(r["usable"] for r in dsp.find_breaks(y, sr, min_context=0.0))
     assert not any(r["usable"] for r in dsp.find_breaks(y, sr, min_steadiness=0.0))
 
-    both = dsp.find_breaks(y, sr, min_context=0.0, min_steadiness=0.0, min_bars=0.0)
-    assert any(r["usable"] for r in both), "only dropping both lets it through"
+    assert not any(r["usable"] for r in dsp.find_breaks(y, sr, min_length=0.5))
+
+    everything = dsp.find_breaks(
+        y, sr, min_context=0.0, min_steadiness=0.0, min_bars=0.0, min_length=0.5
+    )
+    assert any(r["usable"] for r in everything), "only dropping all three does"
 
 
 # ── horns are not drums ───────────────────────────────────────────────
@@ -411,3 +415,33 @@ def test_every_region_reports_its_pulse():
     for region in dsp.find_breaks(y, sr, bpm=86.0):
         assert 0.0 <= region["steadiness"] <= 1.0
         assert isinstance(region["pulse_bpm"], float)
+
+
+def test_two_bars_is_measured_against_the_record_not_the_region():
+    """Regression: the fallback used the region's own pulse_bpm, which is
+    usually the eighth-note subdivision — twice the beat. Asking for "two
+    bars" of that asks for one, and 2.4-second regions passed a two-bar test.
+    """
+    y, sr = _record_with("break")
+    at_tempo = dsp.find_breaks(y, sr, bpm=86.0)
+    assert at_tempo[0]["min_length_needed"] == pytest.approx(5.58, abs=0.05)
+
+    # With no tempo it must fall back to the flat floor, never to something
+    # derived from the region being judged.
+    no_tempo = dsp.find_breaks(y, sr)
+    assert no_tempo[0]["min_length_needed"] == pytest.approx(4.0, abs=0.01)
+    for region in no_tempo:
+        assert region["min_length_needed"] != pytest.approx(
+            (60.0 / max(region["pulse_bpm"], 1)) * 8, abs=0.01)
+
+
+def test_a_two_second_region_never_counts():
+    """The shortest thing that survived the old bar test was 2.2 seconds."""
+    y, sr = _kit(2.2, [0, 0.5, 1, 1.5])
+    assert not any(r["usable"] for r in dsp.find_breaks(y, sr, bpm=86.0))
+
+
+def test_the_bar_can_be_moved():
+    y, sr = _record_with("break")
+    assert any(r["usable"] for r in dsp.find_breaks(y, sr, bpm=86.0, min_bars=2.0))
+    assert not any(r["usable"] for r in dsp.find_breaks(y, sr, bpm=86.0, min_bars=6.0))
