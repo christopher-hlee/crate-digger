@@ -1,0 +1,42 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Runs Crate Digger on your own Mac, at login, and keeps it running.
+
+  `crate serve` in a terminal dies with the terminal, and after a reboot the
+  URL is dead until you remember to start it again. This is the macOS
+  equivalent of the systemd unit the VPS uses.
+
+  Install with deploy/install-local.sh, which fills in the paths below.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.cratedigger.app</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__REPO__/.venv/bin/crate</string>
+        <string>serve</string>
+    </array>
+
+    <!-- .env is read from the working directory, so this must be the repo. -->
+    <key>WorkingDirectory</key>
+    <string>__REPO__</string>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Restart it if it ever exits, for any reason. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- Don't spin: if it is crash-looping, back off rather than hammer. -->
+    <key>ThrottleInterval</key>
+    <integer>10</integer>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/crate-digger.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/crate-digger.log</string>
+</dict>
+</plist>

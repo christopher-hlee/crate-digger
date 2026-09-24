@@ -79,6 +79,16 @@ crate serve
 # → http://127.0.0.1:8770
 ```
 
+That lasts as long as the terminal does. To have it simply always be there —
+at login, and again if it ever crashes:
+
+```bash
+./deploy/install-local.sh        # macOS launch agent
+```
+
+When the URL does not answer, `./deploy/doctor.sh` walks the chain and names
+the broken link. It knows the difference between a Mac and the server.
+
 Point it at a folder your DAW watches and everything you chop shows up there:
 
 ```bash

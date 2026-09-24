@@ -18,8 +18,24 @@ warn() { printf '  \033[33m!\033[0m %s\n' "$*"; WARNED=$((WARNED+1)); }
 head() { printf '\n\033[1m%s\033[0m\n' "$*"; }
 fix()  { printf '      → %s\n' "$*"; }
 
+# This runs on the VPS (systemd) and on a Mac (launchd). Checking for
+# systemctl on a Mac reports "not installed" for everything and sends you
+# looking for a service that was never meant to exist there.
+MAC=0; [ "$(uname)" = "Darwin" ] && MAC=1
+LABEL="com.cratedigger.app"
+
 head "1. The app process"
-if systemctl is-active --quiet crate-api 2>/dev/null; then
+if [ "$MAC" = 1 ]; then
+  if launchctl print "gui/$UID/$LABEL" >/dev/null 2>&1; then
+    pass "launch agent $LABEL is loaded"
+  elif [ -f "$HOME/Library/LaunchAgents/$LABEL.plist" ]; then
+    fail "the launch agent is installed but not loaded"
+    fix "launchctl bootstrap gui/$UID ~/Library/LaunchAgents/$LABEL.plist"
+  else
+    warn "no launch agent — so it only runs while a terminal holds it open"
+    fix "./deploy/install-local.sh   # runs at login, restarts if it dies"
+  fi
+elif systemctl is-active --quiet crate-api 2>/dev/null; then
   pass "crate-api is running (up $(systemctl show crate-api -p ActiveEnterTimestamp --value | cut -d' ' -f2-3))"
 elif systemctl list-unit-files crate-api.service >/dev/null 2>&1; then
   fail "crate-api is installed but not running"
@@ -60,6 +76,12 @@ if [ -n "$HEALTH" ]; then
   esac
 else
   fail "the app is not answering on $LOCAL"
+  if [ "$MAC" = 1 ]; then
+    fix "nothing is listening — that is ERR_CONNECTION_REFUSED in the browser"
+    fix "./deploy/install-local.sh   # or, for now: source .venv/bin/activate && crate serve"
+  else
+    fix "sudo systemctl restart crate-api"
+  fi
 fi
 
 head "4. Its settings"
@@ -77,12 +99,21 @@ if [ -f .env ]; then
     fix "mkdir -p '$LIB' && check ReadWritePaths= in /etc/systemd/system/crate-api.service"
   fi
 else
-  fail ".env is missing — systemd's EnvironmentFile= makes this a start failure"
-  fix "cp .env.example .env && .venv/bin/crate hashpw --write"
+  if [ "$MAC" = 1 ]; then
+    # launchd does not read it; the app does, from its working directory. So
+    # missing just means defaults, not a failure to start.
+    warn ".env is missing — running on defaults, library at ~/CrateDigger"
+    fix "cp .env.example .env   # to set CRATE_EXPORT_DIR for your DAW folder"
+  else
+    fail ".env is missing — systemd's EnvironmentFile= makes this a start failure"
+    fix "cp .env.example .env && .venv/bin/crate hashpw --write"
+  fi
 fi
 
 head "5. Caddy"
-if systemctl is-active --quiet caddy 2>/dev/null; then
+if [ "$MAC" = 1 ]; then
+  warn "skipped — Caddy fronts the server install, not this one"
+elif systemctl is-active --quiet caddy 2>/dev/null; then
   pass "caddy is running"
   if command -v caddy >/dev/null; then
     if sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
@@ -134,7 +165,9 @@ else
 fi
 
 head "7. The hunt"
-if systemctl list-unit-files crate-hunt.timer >/dev/null 2>&1; then
+if [ "$MAC" = 1 ]; then
+  warn "skipped — the hunt timer belongs on the box that digs"
+elif systemctl list-unit-files crate-hunt.timer >/dev/null 2>&1; then
   if systemctl is-active --quiet crate-hunt.timer; then
     pass "timer is armed — next $(systemctl show crate-hunt.timer -p NextElapseUSecRealtime --value | cut -d' ' -f2-3)"
   else
