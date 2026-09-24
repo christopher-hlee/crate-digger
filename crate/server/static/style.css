@@ -105,9 +105,12 @@ label.mini { display: inline-flex; align-items: center; gap: 5px; font-size: 12p
 .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .row.right { justify-content: flex-end; }
 
-/* `display` on a class outranks the user-agent [hidden] rule, so an element
-   like this one stays visible when hidden — say it explicitly. */
-.chip[hidden], .badge[hidden], .pad[hidden] { display: none !important; }
+/* Any rule that sets `display` outranks the user-agent [hidden] rule, so every
+   class here that does so stays visible when hidden. Listing the offenders one
+   at a time just means finding the next one as a bug — .chip was the phantom
+   "0 working", .btn was a Keep button on an already-kept record. State it once,
+   for everything. */
+[hidden] { display: none !important; }
 
 .chip {
   display: inline-flex; align-items: center; gap: 7px;

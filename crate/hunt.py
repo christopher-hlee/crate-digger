@@ -343,7 +343,10 @@ async def _work_page(
 
         # Analysis already looked for breaks; re-gate with this hunt's bar.
         y, sr = CACHE.load(Path(row["file_path"]), sr=22050)
-        regions = dsp.find_breaks(y, sr, min_lift=min_lift, max_harmonic=max_harmonic)
+        regions = dsp.find_breaks(
+            y, sr, min_lift=min_lift, max_harmonic=max_harmonic,
+            bpm=row.get("bpm"),
+        )
         db.update_sample(row["id"], breaks=regions)
 
         if require_break and not dsp.has_usable_break(regions):

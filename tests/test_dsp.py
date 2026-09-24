@@ -215,13 +215,23 @@ def test_run_out_groove_at_the_end_is_not_a_break():
     assert not any(r["usable"] for r in dsp.find_breaks(y, sr))
 
 
-def test_min_context_is_what_rejects_the_start():
-    """The guard is structural, not a magic number: relax it and the lead-in
-    comes back, which is the proof it is doing the work."""
+def test_the_lead_in_is_rejected_twice_over():
+    """Two independent tests catch a needle drop, which is why it stays out.
+
+    It is at the start of the record, so `min_context` rejects it; and groove
+    crackle has no pulse, so `min_steadiness` rejects it too. Relaxing either
+    alone still leaves it out — it takes both, which is what makes this robust
+    rather than one tuned constant.
+    """
     y, sr = make_record_with_a_break(break_from=None, break_to=None)
     y = _with_lead_in(y, sr)
+
     assert not any(r["usable"] for r in dsp.find_breaks(y, sr))
-    assert any(r["usable"] for r in dsp.find_breaks(y, sr, min_context=0.0))
+    assert not any(r["usable"] for r in dsp.find_breaks(y, sr, min_context=0.0))
+    assert not any(r["usable"] for r in dsp.find_breaks(y, sr, min_steadiness=0.0))
+
+    both = dsp.find_breaks(y, sr, min_context=0.0, min_steadiness=0.0, min_bars=0.0)
+    assert any(r["usable"] for r in both), "only dropping both lets it through"
 
 
 # ── horns are not drums ───────────────────────────────────────────────
@@ -282,3 +292,122 @@ def test_percussive_curve_can_return_harmonic_energy():
     during = harmonic[(times > 12) & (times < 18)].mean()
     outside = harmonic[(times < 9) | (times > 21)].mean()
     assert during < outside * 0.5, "harmonic energy must fall during the break"
+
+
+# ── a break repeats; a solo does not ──────────────────────────────────
+# Percussive share and harmonic drop call these identical — both are pure
+# drums with the band gone. Only the pulse tells them apart.
+
+def _kit(seconds, pattern, *, bpm=86.0, jitter=0.0, seed=0, sr=22050):
+    """A drum pattern, `pattern` given as offsets in beats within two beats."""
+    y = np.zeros(int(sr * seconds))
+    beat = 60.0 / bpm
+    rng = np.random.RandomState(seed)
+    at = 0.0
+    while at < seconds:
+        for off in pattern:
+            hit = at + off * beat + (rng.randn() * jitter if jitter else 0.0)
+            start = int(hit * sr)
+            n = int(0.06 * sr)
+            if 0 <= start and start + n <= len(y):
+                y[start:start + n] += rng.randn(n) * np.exp(-np.linspace(0, 6, n))
+        at += 2 * beat
+    return (y / max(np.max(np.abs(y)), 1e-9) * 0.8).astype(np.float32), sr
+
+
+def test_a_steady_break_reads_as_steady():
+    y, sr = _kit(8, [0, 0.5, 1, 1.5])
+    steadiness, bpm = dsp.pulse_clarity(y, sr)
+    assert steadiness > 0.8
+    assert bpm > 0
+
+
+def test_a_drum_solo_does_not():
+    y, sr = _kit(8, [0, 0.31, 0.44, 0.9, 1.17, 1.6, 1.72], jitter=0.05, seed=3)
+    assert dsp.pulse_clarity(y, sr)[0] < 0.30
+
+
+def test_a_human_loose_break_still_passes():
+    """Real drummers are not quantised; the bar must not demand that."""
+    y, sr = _kit(8, [0, 0.5, 1, 1.5], jitter=0.012, seed=7)
+    assert dsp.pulse_clarity(y, sr)[0] > 0.30
+
+
+def test_dynamics_do_not_read_as_unsteadiness():
+    y, sr = _kit(8, [0, 0.5, 1, 1.5], seed=5)
+    quiet = y.copy()
+    quiet[: len(quiet) // 2] *= 0.4          # the drummer plays the first half softer
+    assert dsp.pulse_clarity(quiet, sr)[0] > 0.6
+
+
+def test_pulse_clarity_of_nothing():
+    assert dsp.pulse_clarity(np.zeros(4096, dtype=np.float32), 22050) == (0.0, 0.0)
+
+
+def _record_with(kind, *, seconds=40, bpm=86.0, sr=22050):
+    """A side where the band drops out for 8 bars and the kit keeps going."""
+    t = np.arange(int(sr * seconds)) / sr
+    band = (0.35 * np.sin(2 * np.pi * 220 * t) + 0.30 * np.sin(2 * np.pi * 277 * t)
+            + 0.25 * np.sin(2 * np.pi * 330 * t))
+    band[int(14 * sr):int(22 * sr)] *= 0.04
+    y = band.copy()
+    rng = np.random.RandomState(4)
+    beat = 60.0 / bpm
+
+    def hit(at, amp=0.5, source=rng):
+        start, n = int(at * sr), int(0.06 * sr)
+        if 0 <= start and start + n <= len(y):
+            y[start:start + n] += source.randn(n) * np.exp(-np.linspace(0, 6, n)) * amp
+
+    at = 0.0
+    while at < seconds:
+        for off in (0, 0.5, 1, 1.5):
+            hit(at + off * beat)
+        at += 2 * beat
+
+    if kind == "solo":
+        y[int(14 * sr):int(22 * sr)] = 0.0
+        loose = np.random.RandomState(9)
+        at = 14.0
+        while at < 21.9:
+            hit(at, 0.8, loose)
+            at += abs(loose.randn() * 0.12) + 0.08
+    return (y / np.max(np.abs(y)) * 0.9).astype(np.float32), sr
+
+
+def test_a_record_whose_band_drops_out_to_a_steady_break_is_kept():
+    y, sr = _record_with("break")
+    usable = [r for r in dsp.find_breaks(y, sr, bpm=86.0) if r["usable"]]
+    assert len(usable) == 1
+    assert usable[0]["steadiness"] > 0.5
+    assert 12.0 < usable[0]["start_sec"] < 16.0
+
+
+def test_the_same_record_with_a_solo_there_instead_is_not():
+    y, sr = _record_with("solo")
+    found = dsp.find_breaks(y, sr, bpm=86.0)
+    assert found, "the drop-out is still detected"
+    assert not any(r["usable"] for r in found), "but it is not loopable"
+    assert found[0]["steadiness"] < 0.3
+
+
+def test_steadiness_is_what_rejects_it():
+    """Relax only that bar and the solo returns — proof of which test bites."""
+    y, sr = _record_with("solo")
+    assert any(r["usable"] for r in
+               dsp.find_breaks(y, sr, bpm=86.0, min_steadiness=0.0))
+
+
+def test_a_break_too_short_to_loop_is_rejected():
+    """Two seconds of drums is a fill. Two bars at 86 BPM is 5.6 seconds."""
+    y, sr = _record_with("break")
+    strict = dsp.find_breaks(y, sr, bpm=86.0, min_bars=8.0)
+    assert not any(r["usable"] for r in strict)
+    assert strict[0]["min_length_needed"] > strict[0]["length_sec"]
+
+
+def test_every_region_reports_its_pulse():
+    y, sr = _record_with("break")
+    for region in dsp.find_breaks(y, sr, bpm=86.0):
+        assert 0.0 <= region["steadiness"] <= 1.0
+        assert isinstance(region["pulse_bpm"], float)

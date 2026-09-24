@@ -136,8 +136,9 @@ def analyze_file(path: Path | str) -> dict[str, Any]:
         key_confidence=key.confidence,
         breakiness=dsp.breakiness(window),
         # Where the drums run exposed — found across the whole record, not just
-        # the analysis window, because the break is rarely in the middle.
-        breaks=dsp.find_breaks(y, sr),
+        # the analysis window, because the break is rarely in the middle. The
+        # tempo goes in so "long enough to loop" means bars, not seconds.
+        breaks=dsp.find_breaks(y, sr, bpm=tempo.bpm or None),
     )
     if damaged:
         warnings.insert(0, (

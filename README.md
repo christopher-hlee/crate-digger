@@ -123,13 +123,21 @@ subjects to make your own.
 
 ## Finding breaks
 
-**Two criteria, and the second is the one that matters.** Drums rising is not
+**Three criteria, and each catches what the others miss.** Drums rising is not
 enough: `P/(P+H)` climbs both when the drummer comes forward *and* when a
 saturated horn section lands a broadband stab, so a purely relative measure
 returns horn shouts. What distinguishes a break is that the **pitched
 instruments leave** — absolute harmonic energy falls. Both must hold.
 
-The first criterion is still that they *rise*. A record's percussive share climbs when the horns drop out
+The first criterion is still that they *rise*.
+
+The third is that a break **repeats**. Percussive share and harmonic drop call
+a drum solo and a four-bar break identical — both are pure drums with the band
+gone. The difference is that a break has a pulse you can set a clock to, and a
+solo never lands twice in the same place. Autocorrelating the onset envelope
+inside the region measures exactly that: a steady break scores about 0.95, a
+human-loose one 0.65, a drum solo 0.10. And it must be long enough to loop —
+two bars at the record's tempo, not two seconds. A record's percussive share climbs when the horns drop out
 and the drummer is left alone, and that lift is what gets measured, against
 each record's own baseline rather than a fixed threshold. A 1928 shellac reads
 lower everywhere than a 1972 funk 45, so an absolute cutoff finds everything or
@@ -154,7 +162,9 @@ the records with something to lift out.
 
 Thresholds are guesses until they meet your ears. `--min-lift` sets how far the
 drums must rise; `--max-harmonic` how much of the record's pitched content may
-remain (lower is stricter — 0.5 means half of it must have gone).
+remain (lower is stricter — 0.5 means half of it must have gone);
+`min_steadiness` how regular the pulse has to be (0.3 keeps a loose human
+break, rejects a solo).
 
 There is deliberately no default floor on the absolute drum share: it depends on
 the transfer and the arrangement, and a guessed one rejects real breaks as

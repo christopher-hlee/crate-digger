@@ -128,7 +128,10 @@
         <h2 id="d-title">—</h2>
         <p id="d-sub" class="muted"></p>
       </div>
-      <button id="d-close" class="btn btn-ghost" aria-label="Close">✕</button>
+      <div class="row">
+        <button id="d-keep" class="btn btn-primary" hidden>Keep this record</button>
+        <button id="d-close" class="btn btn-ghost" aria-label="Close">✕</button>
+      </div>
     </div>
 
     <div id="d-badges" class="badges"></div>
@@ -156,17 +159,6 @@
     </div>
 
     <div class="tools">
-      <div class="tool">
-        <h3>Loop</h3>
-        <p class="muted small">Drag across the waveform to set the region. Varispeed pitches it like tape — the way it was always done.</p>
-        <div class="row">
-          <label class="mini">To BPM <input id="loop-bpm" type="number" placeholder="90" inputmode="numeric"></label>
-          <button id="loop-render" class="btn">Render loop</button>
-          <label class="mini"><input id="loop-daw" type="checkbox"> → DAW folder</label>
-        </div>
-        <div id="loop-out" class="renders"></div>
-      </div>
-
       <div class="tool" id="tool-breaks" hidden>
         <h3>Breaks</h3>
         <p class="muted small">Where the drums run most exposed on this record. Click one to set it as the loop.</p>
@@ -174,33 +166,9 @@
         <div class="row">
           <button id="breaks-find" class="btn">Find breaks</button>
           <button id="breaks-export" class="btn">Export all as WAV</button>
+          <label class="mini"><input id="breaks-daw" type="checkbox"> → DAW folder</label>
         </div>
-      </div>
-
-      <div class="tool">
-        <h3>Chop</h3>
-        <div class="row">
-          <select id="chop-mode">
-            <option value="transient">At the hits</option>
-            <option value="grid">On the grid</option>
-          </select>
-          <label class="mini" id="chop-sens-wrap">Sensitivity
-            <input id="chop-sens" type="range" min="0.3" max="4" step="0.1" value="1">
-            <span id="chop-sens-val" class="mono">1.0</span>
-          </label>
-          <label class="mini" id="chop-div-wrap" hidden>Step
-            <select id="chop-div">
-              <option value="0.5">1/8</option>
-              <option value="1">1/4</option>
-              <option value="2">1/2</option>
-              <option value="4" selected>1 bar</option>
-              <option value="8">2 bars</option>
-            </select>
-          </label>
-          <button id="chop-preview" class="btn">Preview</button>
-          <button id="chop-export" class="btn btn-primary">Export kit</button>
-        </div>
-        <div id="chop-out" class="pads"></div>
+        <div id="breaks-renders" class="renders"></div>
       </div>
 
       <div class="tool">

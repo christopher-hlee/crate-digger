@@ -232,9 +232,11 @@ async def detect_breaks(request: Request, sample_id: int) -> dict:
 
     _, path = require_audio(request, sample_id)
 
+    row = require_sample(request, sample_id)
+
     def run() -> list[dict]:
         y, sr = CACHE.load(path, sr=22050)
-        return dsp.find_breaks(y, sr)
+        return dsp.find_breaks(y, sr, bpm=row.get("bpm"))
 
     breaks = await asyncio.to_thread(run)
     state(request).db.update_sample(sample_id, breaks=breaks)

@@ -106,6 +106,12 @@ function play(url, key) {
 }
 
 function playRange(url, key, start, end) {
+  // Pressing the same one again means stop, not start over.
+  if (state.playingKey === key && !player.paused) {
+    clearTimeout(padTimer);
+    player.pause();
+    return;
+  }
   clearTimeout(padTimer);
   setSource(url);
   state.playingKey = key;
@@ -120,8 +126,15 @@ function playRange(url, key, start, end) {
 }
 
 function syncPlayingUi() {
-  $$('.card').forEach((c) => c.classList.toggle(
-    'is-playing', c.dataset.key === state.playingKey && !player.paused));
+  const live = (key) => key === state.playingKey && !player.paused;
+  // Break cards were never in this list, so their button stayed ▶ while the
+  // audio played and pressing it restarted instead of pausing.
+  $$('.card, .break-card').forEach((c) => {
+    const on = live(c.dataset.key);
+    c.classList.toggle('is-playing', on);
+    const btn = $('.play-btn', c);
+    if (btn && btn.textContent !== '…') btn.textContent = on ? '⏸' : '▶';
+  });
   const mine = !state.current || state.playingKey === leadKey(state.current);
   $('#t-play').textContent = (player.paused || !mine) ? '▶' : '⏸';
 }
@@ -204,18 +217,23 @@ function cardFor(item, { mode }) {
     gone.classList.add('btn-danger');
   }
 
-  $('.play-btn', el).addEventListener('click', async (ev) => {
-    ev.stopPropagation();
+  async function audition(ev) {
+    if (ev) ev.stopPropagation();
     if (item.id) { play(`/api/samples/${item.id}/file`, leadKey(item)); return; }
-    const btn = ev.currentTarget;
+    const btn = $('.play-btn', el);
+    const was = btn.textContent;
     btn.textContent = '…';
     const track = await playableFor(item);
-    btn.textContent = track ? '▶' : '↗';
+    btn.textContent = track ? was : '↗';
     if (track) play(track.stream_url, leadKey(item));
     else if (item.page_url) window.open(item.page_url, '_blank', 'noopener');
     else toast('Nothing playable on that one', 'err');
-  });
-  el.addEventListener('click', () => openDetail(item));
+  }
+
+  $('.play-btn', el).addEventListener('click', audition);
+  // Clicking the row plays it, because that is what clicking a record in a
+  // list means. Clicking it again stops it; play() and playRange() toggle.
+  el.addEventListener('click', () => { openDetail(item); audition(); });
   return el;
 }
 
@@ -333,6 +351,10 @@ function showView(name) {
   state.view = name;
   $$('.tab').forEach((t) => t.classList.toggle('is-active', t.dataset.view === name));
   $$('.view').forEach((v) => { v.hidden = v.id !== `view-${name}`; });
+  // The pane belongs to the list you were in; carrying it across tabs leaves
+  // a record on screen that the transport is no longer driving.
+  $('#detail').hidden = true;
+  player.pause();
   if (name === 'crate') loadLibrary();
   if (name === 'breaks') loadBreaks();
 }
@@ -384,7 +406,7 @@ $('#dig-hunt').addEventListener('click', async () => {
   try {
     const { job } = await api('/api/hunt', {
       method: 'POST',
-      body: { dig: slug, want: 6, to_export_dir: $('#loop-daw')?.checked || false },
+      body: { dig: slug, want: 6, to_export_dir: $('#breaks-daw')?.checked || false },
     });
     huntJobs.add(job.id);
     toast('Listening through the seam — keepers land in your crate', 'ok');
@@ -495,8 +517,7 @@ async function openDetail(item) {
   state.region = null;
   state.slices = [];
   $('#detail').hidden = false;
-  $('#chop-out').replaceChildren();
-  $('#loop-out').replaceChildren();
+  $('#breaks-renders').replaceChildren();
 
   const id = item.id || item.sample_id;
   state.sample = id ? await api(`/api/samples/${id}`).catch(() => null) : null;
@@ -508,7 +529,22 @@ async function openDetail(item) {
   $('#d-notes').value = row.notes || '';
   $('#d-source').href = row.page_url || '#';
   $('#d-star').textContent = row.starred ? '★ Starred' : '☆ Star';
-  $('#d-remove').hidden = !state.sample?.id;
+
+  // A lead has no file, so everything below needs Keep pressed first. Show
+  // that as one button rather than as six controls that quietly do nothing.
+  const stored = Boolean(state.sample?.id);
+  const keepBtn = $('#d-keep');
+  keepBtn.hidden = stored;
+  keepBtn.disabled = false;
+  keepBtn.textContent = 'Keep this record';
+  $('#d-remove').hidden = !stored;
+  ['#d-star', '#d-crate-add', '#d-reanalyze', '#d-daw',
+   '#breaks-find', '#breaks-export'].forEach((sel) => {
+    const el = $(sel);
+    if (!el) return;
+    el.disabled = !stored;
+    el.title = stored ? '' : 'Keep this record first';
+  });
 
   renderBadges(row);
   renderBreaks(state.sample);
@@ -635,7 +671,7 @@ $('#breaks-find').addEventListener('click', async () => {
 $('#breaks-export').addEventListener('click', async () => {
   const row = state.sample;
   if (!row?.id) { toast('Keep this record first', 'err'); return; }
-  const daw = $('#loop-daw').checked ? '?to_export_dir=true' : '';
+  const daw = $('#breaks-daw').checked ? '?to_export_dir=true' : '';
   const res = await api(`/api/samples/${row.id}/breaks/export${daw}`, { method: 'POST' });
   res.breaks.forEach((b) => {
     const el = document.createElement('div');
@@ -647,7 +683,7 @@ $('#breaks-export').addEventListener('click', async () => {
     handle.textContent = '⠿ drag';
     makeDraggable(handle, { mime: 'audio/wav', filename: b.filename, url: b.url });
     el.append(handle);
-    $('#loop-out').prepend(el);
+    $('#breaks-renders').prepend(el);
   });
   toast(`${res.count} break${res.count > 1 ? 's' : ''} rendered`, 'ok');
 });
@@ -676,6 +712,20 @@ function renderOut(row) {
     ? 'Drag straight into Ableton, FL, Logic or Finder.'
     : 'Your browser can’t drag files out — use “Send to DAW folder” or Save. (Chrome and Edge can.)';
 }
+
+$('#d-keep').addEventListener('click', async (ev) => {
+  const item = state.current;
+  if (!item) return;
+  ev.currentTarget.disabled = true;
+  ev.currentTarget.textContent = 'Keeping…';
+  try {
+    // reconcileKeep reopens this pane as the analysed record when the job lands.
+    await keep(item, $$('.card').find((c) => c.dataset.key === leadKey(item)));
+  } catch {
+    ev.currentTarget.disabled = false;
+    ev.currentTarget.textContent = 'Keep this record';
+  }
+});
 
 $('#d-close').addEventListener('click', () => { $('#detail').hidden = true; });
 
@@ -851,111 +901,6 @@ $('#t-play').addEventListener('click', () => {
     player.pause();
   }
 });
-
-/* ── loops ─────────────────────────────────────────────────── */
-
-$('#loop-render').addEventListener('click', async () => {
-  const row = state.sample;
-  if (!row?.id) { toast('Keep this record first', 'err'); return; }
-  if (!state.region) { toast('Drag across the waveform to set a loop', 'err'); return; }
-  const target = parseFloat($('#loop-bpm').value) || null;
-  const res = await api(`/api/samples/${row.id}/loop`, {
-    method: 'POST',
-    body: {
-      start: state.region.start,
-      end: state.region.end,
-      target_bpm: target,
-      source_bpm: row.bpm || null,
-      to_export_dir: $('#loop-daw').checked,
-    },
-  });
-
-  const el = document.createElement('div');
-  el.className = 'render';
-  const shift = res.semitones ? `${res.semitones > 0 ? '+' : ''}${res.semitones} st` : 'no shift';
-  el.innerHTML = `<span class="name">${esc(res.filename)}</span>
-    <span class="muted">${res.bars ? `${res.bars} bars · ` : ''}${shift}</span>`;
-  const handle = document.createElement('span');
-  handle.className = 'draghandle';
-  handle.textContent = '⠿ drag';
-  makeDraggable(handle, { mime: 'audio/wav', filename: res.filename, url: res.url });
-  const dl = document.createElement('a');
-  dl.className = 'btn btn-ghost';
-  dl.href = u(res.url);
-  dl.download = res.filename;
-  dl.textContent = 'Save';
-  el.append(handle, dl);
-  $('#loop-out').prepend(el);
-  toast(res.exported_to_daw ? 'Loop rendered and sent to your DAW folder' : 'Loop rendered', 'ok');
-});
-
-/* ── chopping ──────────────────────────────────────────────── */
-
-$('#chop-mode').addEventListener('change', (e) => {
-  const grid = e.target.value === 'grid';
-  $('#chop-div-wrap').hidden = !grid;
-  $('#chop-sens-wrap').hidden = grid;
-});
-$('#chop-sens').addEventListener('input', (e) => {
-  $('#chop-sens-val').textContent = parseFloat(e.target.value).toFixed(1);
-});
-
-function chopBody() {
-  return {
-    mode: $('#chop-mode').value,
-    sensitivity: parseFloat($('#chop-sens').value),
-    division: parseFloat($('#chop-div').value),
-    bpm: state.sample?.bpm || null,
-    start: state.region?.start ?? 0,
-    end: state.region?.end ?? null,
-  };
-}
-
-$('#chop-preview').addEventListener('click', async () => {
-  const row = state.sample;
-  if (!row?.id) { toast('Keep this record first', 'err'); return; }
-  const res = await api(`/api/samples/${row.id}/chop`, { method: 'POST', body: chopBody() });
-  state.slices = res.slices;
-  drawWave();
-  renderPads(res.slices, { exported: false });
-  toast(`${res.count} slices`, 'ok');
-});
-
-$('#chop-export').addEventListener('click', async () => {
-  const row = state.sample;
-  if (!row?.id) { toast('Keep this record first', 'err'); return; }
-  const res = await api(`/api/samples/${row.id}/chop/export`, {
-    method: 'POST',
-    body: { ...chopBody(), to_export_dir: $('#loop-daw').checked },
-  });
-  state.slices = res.slices;
-  drawWave();
-  renderPads(res.slices, { exported: true });
-  toast(`${res.count} slices written${res.exported_to_daw ? ' and sent to your DAW folder' : ''}`, 'ok');
-});
-
-function renderPads(slices, { exported }) {
-  const wrap = $('#chop-out');
-  wrap.replaceChildren();
-  slices.forEach((s) => {
-    const pad = document.createElement('div');
-    pad.className = `pad${exported ? '' : ' preview-only'}`;
-    pad.innerHTML = `<span class="pad-n">${s.idx + 1}</span>
-      <span>${s.length_sec.toFixed(2)}s</span>`;
-    pad.addEventListener('click', () => {
-      playRange(`/api/samples/${state.sample.id}/file`, `pad-${s.idx}`, s.start_sec, s.end_sec);
-      $$('.pad').forEach((p) => p.classList.remove('is-playing'));
-      pad.classList.add('is-playing');
-    });
-    if (exported && s.url) {
-      makeDraggable(pad, { mime: 'audio/wav', filename: s.filename, url: s.url });
-      pad.title = `Drag ${s.filename} into your DAW`;
-    } else {
-      pad.title = 'Preview only — export the kit to drag these out';
-    }
-    wrap.append(pad);
-  });
-}
 
 /* ── detail actions ────────────────────────────────────────── */
 
@@ -1145,8 +1090,8 @@ document.addEventListener('keydown', (ev) => {
   await Promise.all([loadDigs(), loadCrates()]);
   const health = await api('/api/health', { quiet: true }).catch(() => null);
   if (health && !health.export_dir) {
-    $('#loop-daw').disabled = true;
-    $('#loop-daw').parentElement.title =
+    $('#breaks-daw').disabled = true;
+    $('#breaks-daw').parentElement.title =
       'Set CRATE_EXPORT_DIR to a folder your DAW browser watches';
   }
   pollJobs();
@@ -1201,11 +1146,16 @@ function breakCard(b) {
     </div>
     <div class="card-actions"></div>`;
 
-  $('.play-btn', el).addEventListener('click', (ev) => {
-    ev.stopPropagation();
+  const auditionBreak = (ev) => {
+    if (ev) ev.stopPropagation();
     playRange(`/api/samples/${b.sample_id}/file`, el.dataset.key, b.start_sec, b.end_sec);
     $$('.break-card').forEach((c) => c.classList.remove('is-current'));
     el.classList.add('is-current');
+  };
+  $('.play-btn', el).addEventListener('click', auditionBreak);
+  el.addEventListener('click', (ev) => {
+    if (ev.target.closest('.card-actions')) return;   // Keep / Record buttons
+    auditionBreak();
   });
 
   const actions = $('.card-actions', el);
