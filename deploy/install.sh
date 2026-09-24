@@ -45,6 +45,8 @@ fi
 echo "==> systemd"
 sudo cp deploy/crate-api.service /etc/systemd/system/
 sudo cp deploy/crate-hunt.service deploy/crate-hunt.timer /etc/systemd/system/
+sudo cp deploy/crate-watchdog.service deploy/crate-watchdog.timer /etc/systemd/system/
+chmod +x deploy/watchdog.sh deploy/doctor.sh
 sudo sed -i "s#^ExecStart=/usr/bin/flock -n /tmp/crate-hunt.lock .*#ExecStart=/usr/bin/flock -n /tmp/crate-hunt.lock $APP_DIR/deploy/hunt-run.sh#" \
     /etc/systemd/system/crate-hunt.service
 chmod +x deploy/hunt-run.sh
@@ -55,11 +57,13 @@ sudo sed -i \
     -e "s#^WorkingDirectory=.*#WorkingDirectory=$APP_DIR#" \
     -e "s#^EnvironmentFile=.*#EnvironmentFile=$APP_DIR/.env#" \
     -e "s#^ReadWritePaths=.*#ReadWritePaths=$APP_DIR $LIBRARY_DIR#" \
-    /etc/systemd/system/crate-api.service /etc/systemd/system/crate-hunt.service
+    /etc/systemd/system/crate-api.service /etc/systemd/system/crate-hunt.service \
+    /etc/systemd/system/crate-watchdog.service
 sudo sed -i "s#^ExecStart=/home/platform/crate-digger/.venv/bin/uvicorn#ExecStart=$APP_DIR/.venv/bin/uvicorn#" \
     /etc/systemd/system/crate-api.service
 sudo systemctl daemon-reload
 sudo systemctl enable --now crate-api.service
+sudo systemctl enable --now crate-watchdog.timer
 
 echo "==> health"
 # `|| true` because `set -e` and a retry loop do not mix: the first failed
@@ -83,6 +87,7 @@ cat <<DONE
 Running on 127.0.0.1:8770.
 
   Library:               $LIBRARY_DIR
+  Check everything:      ./deploy/doctor.sh https://your-host/crate/
   Put it behind Caddy:   deploy/Caddyfile.snippet
   Hunt on a schedule:    sudo systemctl enable --now crate-hunt.timer
   Watch it:              journalctl -u crate-api -f

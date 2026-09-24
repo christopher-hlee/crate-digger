@@ -174,6 +174,11 @@ will download for hours on request, and that is not something to leave open.
 Breaks come back to your Mac on a fifteen-minute launch agent
 (`deploy/sync-breaks.sh`), so they simply appear in Ableton's browser.
 
+It serves under a sub-path (`https://host/crate/`) as happily as at the root —
+the browser works its own base out from the script URL — so it can share port
+443 with whatever else that box already runs. `./deploy/doctor.sh <url>` walks
+the whole chain when something is wrong and names the broken link.
+
 See [`docs/VPS.md`](docs/VPS.md).
 
 ## Command line

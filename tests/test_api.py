@@ -1025,3 +1025,95 @@ def test_removing_a_record_without_deleting_files(client, kept):
     client.delete(f"/api/samples/{kept['id']}")
     assert audio.is_file(), "the default must not touch the disk"
     assert client.get("/api/library").json()["total"] == 0
+
+
+# ── living under a path ───────────────────────────────────────────────
+# Port 8443 needs a hole in two firewalls; a path on 443 needs neither. The
+# browser works its own base out from the script URL, so only redirects — the
+# one thing the server emits without being asked — need to be told.
+
+@pytest.mark.parametrize("given,stored", [
+    ("/crate", "/crate"), ("crate", "/crate"), ("/crate/", "/crate"),
+    ("", ""), (None, ""), ("  ", ""),
+])
+def test_base_path_is_normalised(tmp_path, given, stored):
+    from crate.config import Settings
+
+    assert Settings(library_dir=tmp_path, base_path=given).base_path == stored
+
+
+@pytest.fixture
+def mounted_client(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from crate.config import Settings
+    from crate.security import hash_password
+    from crate.server.app import create_app
+
+    settings = Settings(
+        library_dir=tmp_path / "library",
+        base_path="/crate",
+        password_hash=hash_password("let me in"),
+        session_secret="fixed-for-tests",
+    )
+    settings.ensure_dirs()
+    with TestClient(create_app(settings)) as c:
+        yield c
+
+
+def test_redirects_point_back_under_the_prefix(mounted_client):
+    """A redirect to /login sends the browser out of the app entirely."""
+    res = mounted_client.get("/", follow_redirects=False)
+    assert res.status_code == 303
+    assert res.headers["location"] == "/crate/login"
+
+    ok = mounted_client.post("/login", data={"password": "let me in"},
+                             follow_redirects=False)
+    assert ok.headers["location"] == "/crate/"
+
+    out = mounted_client.post("/logout", follow_redirects=False)
+    assert out.headers["location"] == "/crate/login"
+
+
+def test_unmounted_redirects_are_unchanged(locked_client):
+    res = locked_client.get("/", follow_redirects=False)
+    assert res.headers["location"] == "/login"
+    ok = locked_client.post("/login", data={"password": "let me in"},
+                            follow_redirects=False)
+    assert ok.headers["location"] == "/"
+
+
+def test_it_works_whether_or_not_the_proxy_strips_the_prefix(mounted_client):
+    """`handle_path` strips /crate; `handle` does not. Both must work.
+
+    Unhandled, the second shape is an infinite redirect: /crate/api/... matches
+    no open path, so it redirects to /crate/login, which also matches none.
+    """
+    assert mounted_client.get("/api/health").status_code == 200
+    assert mounted_client.get("/crate/api/health").status_code == 200
+    assert mounted_client.get("/crate/api/health").json()["ok"] is True
+
+    # And the login page must be reachable both ways, or there is no way in.
+    assert mounted_client.get("/login").status_code == 200
+    assert mounted_client.get("/crate/login").status_code == 200
+
+    # The bare mount point lands on the app, not on a 404.
+    assert mounted_client.get("/crate", follow_redirects=False).status_code in (200, 303)
+
+
+def test_a_guarded_prefixed_request_does_not_loop(mounted_client):
+    res = mounted_client.get("/crate/api/library", follow_redirects=False)
+    assert res.status_code == 401, "an API call answers, it does not redirect"
+
+
+def test_the_page_and_login_reference_assets_relatively(client):
+    """Absolute /static/... breaks the moment the app is not at the root."""
+    page = client.get("/").text
+    assert 'href="static/style.css"' in page and 'src="static/app.js"' in page
+    assert 'href="/static/' not in page and 'src="/static/' not in page
+
+
+def test_login_page_posts_relatively(locked_client):
+    form = locked_client.get("/login").text
+    assert 'action="login"' in form
+    assert 'href="static/style.css"' in form

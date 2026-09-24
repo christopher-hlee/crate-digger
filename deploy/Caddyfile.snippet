@@ -1,34 +1,47 @@
-# Add to /etc/caddy/Caddyfile alongside the Restock site, then:
-#   sudo systemctl reload caddy
+# Crate Digger behind Caddy.
 #
-# Caddy gets the certificate; the app only ever listens on loopback.
-# Pick ONE of the two blocks below.
+# Port 443 is already open and already has a certificate — it is serving
+# Restock. Hanging Crate Digger off a PATH on that same port needs no new
+# firewall rule, no DNS record and no second certificate, which is three
+# fewer things that can be wrong.
+#
+# MERGE this into the site block you already have. Do not add a second block
+# for the same hostname — Caddy will refuse the config.
 
-# ── Option A: a port on the hostname you already have ─────────────────
-# No DNS to set up — it reuses the certificate Caddy already holds for the
-# Restock hostname. Reachable at https://0iu6eih.cserverhost.cloud:8443
-# Open the port first:  sudo ufw allow 8443/tcp
-0iu6eih.cserverhost.cloud:8443 {
+0iu6eih.cserverhost.cloud {
     encode zstd gzip
 
-    # Records stream and drag out from here, so allow a long read: a 100 MB
-    # FLAC over a slow line is normal, not a stall.
-    reverse_proxy 127.0.0.1:8770 {
-        transport http {
-            read_timeout 600s
+    # Without this, /crate loads a page whose relative asset URLs resolve one
+    # level too high and nothing loads. The trailing slash is load-bearing.
+    redir /crate /crate/ 308
+
+    # handle_path strips the prefix, so the app still sees /api/... and needs
+    # no idea it is mounted anywhere. Set CRATE_BASE_PATH=/crate in .env so
+    # its redirects point back here.
+    handle_path /crate/* {
+        reverse_proxy 127.0.0.1:8770 {
+            transport http {
+                # Records stream and drag out from here: a 100 MB FLAC over a
+                # slow line is normal, not a stall.
+                read_timeout 600s
+            }
         }
+    }
+
+    # Everything else stays with Restock, exactly as before. `handle` blocks
+    # are mutually exclusive and tried in order, so this only sees what /crate
+    # did not claim.
+    handle {
+        reverse_proxy 127.0.0.1:8003
     }
 }
 
-# ── Option B: its own subdomain ───────────────────────────────────────
-# Nicer, but needs an A record for crate.yourdomain.com pointing at this box
-# before Caddy can get a certificate for it. Delete Option A if you use this.
+# ── The old approach, kept for reference ──────────────────────────────
+# A separate port needs the port opened in BOTH ufw and the IONOS cloud
+# firewall (a separate policy in the IONOS control panel, which ufw cannot
+# touch). That second one is easy to miss, and its symptom — connections that
+# hang rather than refuse — looks exactly like the app being down.
 #
-# crate.yourdomain.com {
-#     encode zstd gzip
-#     reverse_proxy 127.0.0.1:8770 {
-#         transport http {
-#             read_timeout 600s
-#         }
-#     }
+# 0iu6eih.cserverhost.cloud:8443 {
+#     reverse_proxy 127.0.0.1:8770
 # }

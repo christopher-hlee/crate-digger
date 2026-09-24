@@ -19,7 +19,7 @@ OPEN_PATHS = ("/login", "/api/health", "/static/")
 router = APIRouter()
 
 LOGIN_PAGE = """<!doctype html><meta charset=utf-8>
-<title>Crate Digger</title><link rel=stylesheet href=/static/style.css>
+<title>Crate Digger</title><link rel=stylesheet href="static/style.css">
 <style>
   body {{ display: grid; place-items: center; height: 100vh; }}
   form {{ background: var(--panel); border: 1px solid var(--line);
@@ -27,7 +27,7 @@ LOGIN_PAGE = """<!doctype html><meta charset=utf-8>
           display: flex; flex-direction: column; gap: 12px; }}
   .err {{ color: var(--red); font-size: 12px; }}
 </style>
-<form method=post action=/login>
+<form method=post action="login">
   <h2>Crate Digger</h2>
   {error}
   <input type=password name=password placeholder="Password" autofocus required>
@@ -58,13 +58,13 @@ async def login_form() -> str:
 async def login(request: Request, password: str = Form(...)):
     settings = request.app.state.crate.settings
     if not is_enabled(settings):
-        return RedirectResponse("/", status_code=303)
+        return RedirectResponse(f"{settings.base_path}/", status_code=303)
     if not verify_password(password, settings.password_hash or ""):
         return HTMLResponse(
             LOGIN_PAGE.format(error='<p class="err">That is not the password.</p>'),
             status_code=401,
         )
-    response = RedirectResponse("/", status_code=303)
+    response = RedirectResponse(f"{settings.base_path}/", status_code=303)
     response.set_cookie(
         COOKIE, sign_session(settings.session_secret),
         httponly=True, samesite="lax", max_age=30 * 24 * 3600,
@@ -74,8 +74,9 @@ async def login(request: Request, password: str = Form(...)):
 
 
 @router.post("/logout", include_in_schema=False)
-async def logout():
-    response = RedirectResponse("/login", status_code=303)
+async def logout(request: Request):
+    settings = request.app.state.crate.settings
+    response = RedirectResponse(f"{settings.base_path}/login", status_code=303)
     response.delete_cookie(COOKIE)
     return response
 
@@ -89,5 +90,7 @@ async def guard(request: Request, call_next):
             # HTTPException raised here escapes as a 500 — return the response.
             if path.startswith("/api/"):
                 return JSONResponse({"detail": "Not logged in"}, status_code=401)
-            return RedirectResponse("/login", status_code=303)
+            return RedirectResponse(
+                f"{settings.base_path}/login", status_code=303
+            )
     return await call_next(request)

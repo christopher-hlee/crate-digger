@@ -121,30 +121,72 @@ probe itself; everything else needs the session cookie or a Bearer token.
 
 ## Behind Caddy
 
-Caddy already terminates TLS on this box for Restock. The quickest way to a URL
-is a **port on the hostname you already have** — no DNS, and it reuses the
-certificate Caddy holds:
+**Use a path on port 443, not a separate port.** 443 is already open, already
+has a certificate, and is already proving it works by serving Restock. A second
+port needs a hole in *two* firewalls: `ufw`, and the IONOS cloud firewall — a
+separate policy in the IONOS control panel that `ufw` cannot see or change.
+Miss the second and connections hang rather than refuse, which looks exactly
+like the app being down.
+
+Merge the block from `deploy/Caddyfile.snippet` into the site you already have
+— one block per hostname, or Caddy rejects the config — then:
 
 ```bash
-sudo ufw allow 8443/tcp
-sudo nano /etc/caddy/Caddyfile        # paste Option A from deploy/Caddyfile.snippet
+sudo caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile
 sudo systemctl reload caddy
 ```
 
-Then it is at `https://<your-host>:8443`. A subdomain is tidier if you own a
-domain — Option B in the same file — but it needs an A record in place first,
-or Caddy cannot get a certificate for it.
+Tell the app where it is mounted, so its redirects point back into it:
 
-**Set the password before either.** `/api/hunt` will download for hours for
-anyone who asks, and a URL on a public host is found eventually:
+```bash
+echo 'CRATE_BASE_PATH=/crate' >> .env
+sudo systemctl restart crate-api
+```
+
+It is then at `https://<your-host>/crate/`. The browser works its own base out
+from the script's URL, so nothing else needs configuring, and the app accepts
+both `handle_path` (prefix stripped) and `handle` (prefix left on).
+
+**Set the password before any of this.** `/api/hunt` will download for hours
+for anyone who asks:
 
 ```bash
 .venv/bin/crate hashpw --write
 sudo systemctl restart crate-api
-curl -s localhost:8770/api/health     # must say "auth":true
 ```
 
-The app only ever listens on loopback — Caddy is the only thing exposed.
+## When the URL does not work
+
+```bash
+./deploy/doctor.sh https://your-host/crate/
+```
+
+It walks every link — service, socket, health, `.env`, library permissions,
+disk, Caddy's config validity, and the URL itself from the box — and names the
+one that is broken along with the command that fixes it. Fix the ✗ items
+top-down; each makes the ones below it moot.
+
+The case worth knowing: if the app answers on `127.0.0.1:8770` but the public
+URL does not answer at all, nothing on the box is wrong. That is a firewall
+above the OS, and on IONOS that means the control panel.
+
+## Staying up
+
+`crate-api` restarts on any exit and never gives up (`Restart=always`,
+`StartLimitIntervalSec=0` — the default quits after five restarts in ten
+seconds and leaves the unit dead).
+
+That still cannot see a server that is alive but wedged, so `crate-watchdog`
+asks the question systemd cannot — does it answer? — every five minutes, and
+restarts it after two consecutive misses. Two, not one: a single timeout during
+a heavy analysis run is normal, and restarting for it would cut off a download
+in progress. It says "still down" exactly once rather than every five minutes,
+because a watchdog you mute is worse than none.
+
+```bash
+sudo systemctl enable --now crate-watchdog.timer
+journalctl -u crate-watchdog -f
+```
 
 ## No URL? Use a tunnel
 

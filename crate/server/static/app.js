@@ -1,5 +1,16 @@
 /* Crate Digger — browser client. */
 
+/* Where this app is mounted.
+
+   The module knows its own URL, so a deployment under /crate/ configures
+   itself: /crate/static/app.js means a base of /crate, and /static/app.js
+   means no base at all. Every app path goes through u() — absolute URLs
+   (an archive.org stream) pass through untouched. */
+const BASE = new URL('.', import.meta.url).pathname
+  .replace(/\/static\/$/, '')
+  .replace(/\/$/, '');
+const u = (path) => (typeof path === 'string' && path.startsWith('/') ? BASE + path : path);
+
 const $  = (sel, root = document) => root.querySelector(sel);
 const $$ = (sel, root = document) => [...root.querySelectorAll(sel)];
 
@@ -26,7 +37,7 @@ async function api(path, { method = 'GET', body, quiet = false } = {}) {
     opts.headers['Content-Type'] = 'application/json';
     opts.body = JSON.stringify(body);
   }
-  const res = await fetch(path, opts);
+  const res = await fetch(u(path), opts);
   if (!res.ok) {
     let detail = `${res.status} ${res.statusText}`;
     try { detail = (await res.json()).detail || detail; } catch { /* not json */ }
@@ -64,7 +75,7 @@ state.dragSupported = /Chrome|Chromium|Edg/.test(navigator.userAgent)
 function makeDraggable(el, { mime, filename, url }) {
   el.draggable = true;
   el.addEventListener('dragstart', (ev) => {
-    const abs = new URL(url, location.href).href;
+    const abs = new URL(u(url), location.href).href;
     ev.dataTransfer.effectAllowed = 'copy';
     ev.dataTransfer.setData('DownloadURL', `${mime}:${filename}:${abs}`);
     ev.dataTransfer.setData('text/uri-list', abs);
@@ -81,8 +92,9 @@ function setSource(url) {
   /* Assigning .src reloads the element — it stops playback and resets
      duration to NaN — so only assign when the URL actually changes. Clicking
      a card you are already auditioning must not cut the music off. */
-  const abs = new URL(url, location.href).href;
-  if (player.src !== abs) player.src = url;
+  const resolved = u(url);
+  const abs = new URL(resolved, location.href).href;
+  if (player.src !== abs) player.src = resolved;
 }
 
 function play(url, key) {
@@ -652,7 +664,7 @@ function renderOut(row) {
   }
   handle.style.display = '';
   $('#d-dl').style.display = '';
-  $('#d-dl').href = `/api/samples/${id}/file?download=true`;
+  $('#d-dl').href = u(`/api/samples/${id}/file?download=true`);
   const ext = (row.ext || 'mp3').toLowerCase();
   const mimes = { mp3: 'audio/mpeg', flac: 'audio/flac', wav: 'audio/wav', ogg: 'audio/ogg' };
   makeDraggable(handle, {
@@ -869,7 +881,7 @@ $('#loop-render').addEventListener('click', async () => {
   makeDraggable(handle, { mime: 'audio/wav', filename: res.filename, url: res.url });
   const dl = document.createElement('a');
   dl.className = 'btn btn-ghost';
-  dl.href = res.url;
+  dl.href = u(res.url);
   dl.download = res.filename;
   dl.textContent = 'Save';
   el.append(handle, dl);

@@ -39,6 +39,10 @@ class Settings(BaseSettings):
     # --- server --------------------------------------------------------
     host: str = "127.0.0.1"
     port: int = 8770
+    #: Set when a proxy serves this app under a sub-path, e.g. "/crate".
+    #: Only redirects need it — the browser works its own base out from where
+    #: it loaded the script, so API calls are correct without any config.
+    base_path: str = ""
 
     # --- network -------------------------------------------------------
     user_agent: str = "crate-digger/0.1 (+https://github.com/christopher-hlee/crate-digger)"
@@ -69,6 +73,13 @@ class Settings(BaseSettings):
     enable_ripper: bool = False
     ripper_bin: str = "yt-dlp"
     ripper_format: str = "bestaudio/best"
+
+    @field_validator("base_path", mode="before")
+    @classmethod
+    def _tidy_base(cls, value):
+        """Accept crate, /crate, /crate/ — store /crate."""
+        text = str(value or "").strip().strip("/")
+        return f"/{text}" if text else ""
 
     @field_validator("library_dir", "export_dir", mode="before")
     @classmethod

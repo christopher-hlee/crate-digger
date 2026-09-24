@@ -314,12 +314,14 @@ def main(argv: list[str] | None = None) -> int:
     if args.cmd == "serve":
         import uvicorn
 
-        uvicorn.run(
-            "crate.server.app:app",
-            host=args.host or settings.host,
-            port=args.port or settings.port,
-            reload=args.reload,
-        )
+        # Bind first, then tell the settings where we actually are: the
+        # startup warning names the address, and naming the wrong one sends
+        # you to check a port nothing is on.
+        host = args.host or settings.host
+        port = args.port or settings.port
+        object.__setattr__(settings, "host", host)
+        object.__setattr__(settings, "port", port)
+        uvicorn.run("crate.server.app:app", host=host, port=port, reload=args.reload)
         return 0
 
     if args.cmd == "hashpw":

@@ -61,7 +61,28 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     async def _source_error(_: Request, exc: SourceError) -> JSONResponse:
         return JSONResponse({"detail": str(exc)}, status_code=502)
 
+    async def strip_base_path(request: Request, call_next):
+        """Tolerate a proxy that does not strip the mount prefix.
+
+        `handle_path` in Caddy strips /crate before forwarding; `handle` and a
+        plain reverse_proxy do not. Without this the app sees /crate/api/...,
+        matches no route and no open path, and redirects to /crate/login —
+        which it also does not recognise, so it redirects again. An infinite
+        loop that presents as "the URL is broken", from one word in a config
+        file. Accept both shapes instead.
+        """
+        base = settings.base_path
+        if base:
+            path = request.scope["path"]
+            if path == base:
+                request.scope["path"] = "/"
+            elif path.startswith(base + "/"):
+                request.scope["path"] = path[len(base):]
+        return await call_next(request)
+
+    # Added last, so it is outermost and runs before the auth guard sees a path.
     app.middleware("http")(guard)
+    app.middleware("http")(strip_base_path)
     app.include_router(auth_router)
     app.include_router(dig_router)
     app.include_router(library_router)

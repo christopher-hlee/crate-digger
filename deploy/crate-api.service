@@ -2,6 +2,10 @@
 Description=Crate Digger API
 After=network-online.target
 Wants=network-online.target
+# Never stop trying. The default gives up after 5 restarts in 10s and leaves
+# the unit dead until someone notices — which is the whole failure mode this
+# is meant to survive.
+StartLimitIntervalSec=0
 
 [Service]
 Type=simple
@@ -9,7 +13,9 @@ User=platform
 WorkingDirectory=/home/platform/crate-digger
 EnvironmentFile=/home/platform/crate-digger/.env
 ExecStart=/home/platform/crate-digger/.venv/bin/uvicorn crate.server.app:app --host 127.0.0.1 --port 8770
-Restart=on-failure
+# always, not on-failure: a clean exit(0) from a crashed worker still leaves
+# the URL dead, and there is no reason this should ever stop on its own.
+Restart=always
 RestartSec=5
 
 # The API serves and analyses on request; keep it politely behind the monitor.
