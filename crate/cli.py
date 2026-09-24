@@ -258,6 +258,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("path")
     p.add_argument("--no-copy", action="store_true")
 
+    p = sub.add_parser("relocate",
+                       help="repoint a crate copied from another machine")
+    p.add_argument("--dry-run", action="store_true",
+                   help="show what would change and write nothing")
+
     p = sub.add_parser("ls", help="list the crate")
     p.add_argument("--bpm", nargs=2, type=float, metavar=("MIN", "MAX"))
     p.add_argument("--key")
@@ -469,6 +474,55 @@ def main(argv: list[str] | None = None) -> int:
             db, args.path, audio_dir=settings.audio_dir, copy=not args.no_copy
         )
         print(_fmt(row))
+        return 0
+
+    if args.cmd == "relocate":
+        # Stored paths are absolute, so a crate copied to another machine —
+        # or just another username — points at files that are not there. Every
+        # file in a crate lives under one of these, which is what makes the
+        # old prefix recoverable without being told what it was.
+        SUBDIRS = ("audio", "slices", "loops", "picked")
+
+        def rebase(stored: str) -> Path | None:
+            parts = Path(stored).parts
+            # Rightmost match: a home directory called "audio" would otherwise
+            # capture the whole path and rebase it to nonsense.
+            for i in range(len(parts) - 1, -1, -1):
+                if parts[i] in SUBDIRS:
+                    return settings.library_dir.joinpath(*parts[i:])
+            return None
+
+        kept = moved = missing = unknown = 0
+        for table in ("samples", "slices", "picks"):
+            rows = db.query(
+                f"SELECT id, file_path FROM {table} WHERE file_path IS NOT NULL")
+            for row in rows:
+                stored = row["file_path"]
+                if Path(stored).exists():
+                    kept += 1
+                    continue
+                target = rebase(stored)
+                if target is None:
+                    unknown += 1
+                    print(f"  ? {table}#{row['id']}  cannot place {stored}")
+                    continue
+                if not target.exists():
+                    missing += 1
+                    print(f"  ! {table}#{row['id']}  no file at {target}")
+                    continue
+                moved += 1
+                if args.dry_run:
+                    print(f"  → {table}#{row['id']}  {stored}\n     becomes {target}")
+                else:
+                    db.execute(f"UPDATE {table} SET file_path = ? WHERE id = ?",
+                               [str(target), row["id"]])
+
+        verb = "would be repointed" if args.dry_run else "repointed"
+        print(f"\n  {kept} already correct · {moved} {verb}"
+              f" · {missing} missing on disk · {unknown} unplaceable")
+        if missing:
+            print("  Missing files are records whose audio was not copied across."
+                  "\n  `crate refetch <id>` downloads one again.")
         return 0
 
     if args.cmd == "ls":

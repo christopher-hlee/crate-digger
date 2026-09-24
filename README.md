@@ -97,6 +97,9 @@ export CRATE_EXPORT_DIR="~/Music/Ableton/User Library/Samples/Crate"
 crate serve
 ```
 
+Setting up a machine from scratch, or moving your crate onto one:
+[`docs/NEW_LAPTOP.md`](docs/NEW_LAPTOP.md).
+
 See [`.env.example`](.env.example) for every setting, and
 [`docs/DAW_WORKFLOW.md`](docs/DAW_WORKFLOW.md) for wiring it into Ableton, FL,
 Logic and Maschine.
