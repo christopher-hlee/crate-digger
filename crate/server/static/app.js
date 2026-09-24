@@ -189,12 +189,13 @@ function cardFor(item, { mode }) {
         await expandItem(item, el);
       });
     }
-    addBtn(actions, item.sample_id ? '✓ Kept' : 'Keep', 'Download and analyse',
+    addBtn(actions, item.sample_id ? '✓ In Crate' : 'Add to Crate',
+      'Download and analyse — puts the whole record in your Crate',
       async (ev) => {
         ev.stopPropagation();
         ev.currentTarget.disabled = true;
         await keep(item, el);
-      }, Boolean(item.sample_id));
+      }, Boolean(item.sample_id), 'keep');
     addBtn(actions, '✕', 'Pass — don’t show me this again', async (ev) => {
       ev.stopPropagation();
       await api('/api/verdict', { method: 'POST', quiet: true,
@@ -237,12 +238,15 @@ function cardFor(item, { mode }) {
   return el;
 }
 
-function addBtn(parent, label, title, onClick, disabled = false) {
+function addBtn(parent, label, title, onClick, disabled = false, act = '') {
   const b = document.createElement('button');
   b.className = 'btn btn-ghost';
   b.textContent = label;
   b.title = title;
   b.disabled = disabled;
+  // Labels are worded for humans and get reworded; anything that needs to FIND
+  // this button later matches on data-act, never on the text.
+  if (act) b.dataset.act = act;
   b.addEventListener('click', onClick);
   parent.append(b);
   return b;
@@ -292,10 +296,10 @@ function reconcileKeep(job) {
   item.sample_id = ready.sample_id;
   if (cardEl) {
     cardEl.classList.add('is-kept');
-    const btn = $$('.card-actions .btn', cardEl).find((b) => /Keep/.test(b.textContent));
-    if (btn) { btn.textContent = '✓ Kept'; btn.disabled = true; }
+    const btn = $('.card-actions .btn[data-act="keep"]', cardEl);
+    if (btn) { btn.textContent = '✓ In Crate'; btn.disabled = true; }
   }
-  if (samples.length > 1) toast(`Kept ${samples.length} tracks`, 'ok');
+  if (samples.length > 1) toast(`Added ${samples.length} tracks to your Crate`, 'ok');
 
   // If they are looking at this record right now, swap the streaming preview
   // for the real thing.
@@ -536,14 +540,14 @@ async function openDetail(item) {
   const keepBtn = $('#d-keep');
   keepBtn.hidden = stored;
   keepBtn.disabled = false;
-  keepBtn.textContent = 'Keep this record';
+  keepBtn.textContent = 'Add to Crate';
   $('#d-remove').hidden = !stored;
   ['#d-star', '#d-crate-add', '#d-reanalyze', '#d-daw',
    '#breaks-find', '#breaks-export'].forEach((sel) => {
     const el = $(sel);
     if (!el) return;
     el.disabled = !stored;
-    el.title = stored ? '' : 'Keep this record first';
+    el.title = stored ? '' : 'Add this record to your Crate first';
   });
 
   renderBadges(row);
@@ -570,7 +574,7 @@ async function openDetail(item) {
       state.current = { ...item, stream_url: track.stream_url };
       setSource(track.stream_url);
       syncPlayingUi();
-      setWaveNote('Streaming preview — Keep this record to analyse it and draw the waveform');
+      setWaveNote('Streaming preview — add this record to your Crate to analyse it and draw the waveform');
     } else {
       setWaveNote('No audio on this one — open it at the source');
     }
@@ -659,7 +663,7 @@ function renderBreaks(row) {
 
 $('#breaks-find').addEventListener('click', async () => {
   const row = state.sample;
-  if (!row?.id) { toast('Keep this record first', 'err'); return; }
+  if (!row?.id) { toast('Add this record to your Crate first', 'err'); return; }
   toast('Listening for drums…');
   const res = await api(`/api/samples/${row.id}/breaks`, { method: 'POST' });
   row.breaks = res.breaks;
@@ -670,7 +674,7 @@ $('#breaks-find').addEventListener('click', async () => {
 
 $('#breaks-export').addEventListener('click', async () => {
   const row = state.sample;
-  if (!row?.id) { toast('Keep this record first', 'err'); return; }
+  if (!row?.id) { toast('Add this record to your Crate first', 'err'); return; }
   const daw = $('#breaks-daw').checked ? '?to_export_dir=true' : '';
   const res = await api(`/api/samples/${row.id}/breaks/export${daw}`, { method: 'POST' });
   res.breaks.forEach((b) => {
@@ -695,7 +699,7 @@ function renderOut(row) {
   if (!id || !row.file_path) {
     handle.style.display = 'none';
     $('#d-dl').style.display = 'none';
-    note.textContent = 'Keep this record first — then you can drag it out.';
+    note.textContent = 'Add this record to your Crate first — then you can drag it out.';
     return;
   }
   handle.style.display = '';
@@ -717,13 +721,13 @@ $('#d-keep').addEventListener('click', async (ev) => {
   const item = state.current;
   if (!item) return;
   ev.currentTarget.disabled = true;
-  ev.currentTarget.textContent = 'Keeping…';
+  ev.currentTarget.textContent = 'Adding…';
   try {
     // reconcileKeep reopens this pane as the analysed record when the job lands.
     await keep(item, $$('.card').find((c) => c.dataset.key === leadKey(item)));
   } catch {
     ev.currentTarget.disabled = false;
-    ev.currentTarget.textContent = 'Keep this record';
+    ev.currentTarget.textContent = 'Add to Crate';
   }
 });
 
@@ -1068,8 +1072,8 @@ document.addEventListener('keydown', (ev) => {
       if (currentIndex >= 0) cards[currentIndex].click();
       break;
     case 's': case 'S':
-      if (currentIndex >= 0) $$('.card-actions .btn', cards[currentIndex])
-        .find((b) => /Keep/.test(b.textContent))?.click();
+      if (currentIndex >= 0)
+        $('.card-actions .btn[data-act="keep"]', cards[currentIndex])?.click();
       break;
     case 'x': case 'X':
       if (currentIndex >= 0) {
@@ -1154,13 +1158,13 @@ function breakCard(b) {
   };
   $('.play-btn', el).addEventListener('click', auditionBreak);
   el.addEventListener('click', (ev) => {
-    if (ev.target.closest('.card-actions')) return;   // Keep / Record buttons
+    if (ev.target.closest('.card-actions')) return;   // the buttons handle themselves
     auditionBreak();
   });
 
   const actions = $('.card-actions', el);
-  const keepBtn = addBtn(actions, b.picked ? '✓ Kept' : 'Keep',
-    'Render this break and put it in the sync folder', async (ev) => {
+  const keepBtn = addBtn(actions, b.picked ? '✓ In Samples' : 'Add to Samples',
+    'Render this break to a WAV in your samples folder', async (ev) => {
       ev.stopPropagation();
       const btn = ev.currentTarget;
       btn.disabled = true;
@@ -1168,13 +1172,13 @@ function breakCard(b) {
         if (b.picked) {
           await api(`/api/breaks/${b.sample_id}/${b.idx}/pick`, { method: 'DELETE' });
           b.picked = false;
-          btn.textContent = 'Keep';
+          btn.textContent = 'Add to Samples';
           el.classList.remove('is-picked');
         } else {
           const res = await api(`/api/breaks/${b.sample_id}/${b.idx}/pick`,
             { method: 'POST', body: { note: '' } });
           b.picked = true;
-          btn.textContent = '✓ Kept';
+          btn.textContent = '✓ In Samples';
           el.classList.add('is-picked');
           makeDraggable(el, { mime: 'audio/wav', filename: res.filename, url: res.url });
           toast(`${res.filename} — it will sync down`, 'ok');
@@ -1183,9 +1187,10 @@ function breakCard(b) {
         btn.disabled = false;
       }
     });
-  keepBtn.title = 'Only kept breaks become files';
+  keepBtn.dataset.act = 'keep';
+  keepBtn.title = 'Only breaks you add here become files on your machine';
 
-  addBtn(actions, 'Record', 'Open the whole record', (ev) => {
+  addBtn(actions, 'Open Record', 'Jump to the full record this break came from', (ev) => {
     ev.stopPropagation();
     showView('crate');
     api(`/api/samples/${b.sample_id}`).then((row) => openDetail(row));
