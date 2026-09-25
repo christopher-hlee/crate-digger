@@ -125,10 +125,28 @@ If you only want to browse and add samples from a second machine, an SSH
 tunnel needs no Caddy block, no password and no public URL:
 
 ```bash
-ssh -N -L 8770:127.0.0.1:8770 platform@74.208.54.100
+./deploy/tunnel.sh          # then open http://127.0.0.1:8770
 ```
 
-Leave that running and open `http://127.0.0.1:8770` on the laptop. The app is
+Leave that running and open `http://127.0.0.1:8770` on the laptop. To have it
+there at login and back after a drop — a closed lid, a lost network, a server
+reboot:
+
+```bash
+./deploy/install-tunnel.sh
+```
+
+```
+Logs:     tail -f ~/Library/Logs/crate-tunnel.log
+Restart:  launchctl kickstart -k gui/$UID/com.cratedigger.tunnel
+Stop:     launchctl bootout gui/$UID/com.cratedigger.tunnel
+```
+
+The script is plain `ssh -L` with the three options that stop it lying to you:
+`ExitOnForwardFailure` (without it SSH connects while the forward fails, so the
+browser cannot connect while SSH looks healthy), and `ServerAlive*` so a closed
+laptop reconnects instead of leaving a socket that is up but dead. If the port
+is already answering it says so and exits rather than starting a second tunnel. The app is
 on the server, so what you add lands in the server's `picked/` and your main
 machine pulls it down with `deploy/sync-breaks.sh` exactly as before.
 

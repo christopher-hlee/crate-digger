@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Keeps the SSH tunnel to the server open: at login, and again whenever it
+  drops — a closed laptop, a dropped network, a server reboot.
+
+  Install with deploy/install-tunnel.sh, which fills in the paths below.
+
+  The key must need no passphrase, or already be in the agent: with no terminal
+  here, tunnel.sh passes BatchMode so SSH fails fast instead of hanging on a
+  prompt nobody can answer. install-tunnel.sh checks this before installing.
+-->
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.cratedigger.tunnel</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>__REPO__/deploy/tunnel.sh</string>
+    </array>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>CRATE_REMOTE</key>
+        <string>__REMOTE__</string>
+        <key>CRATE_TUNNEL_PORT</key>
+        <string>__PORT__</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <true/>
+
+    <!-- Bring it back whenever it exits, for any reason. -->
+    <key>KeepAlive</key>
+    <true/>
+
+    <!-- A server that is down would otherwise be a reconnect loop. -->
+    <key>ThrottleInterval</key>
+    <integer>15</integer>
+
+    <key>StandardOutPath</key>
+    <string>__HOME__/Library/Logs/crate-tunnel.log</string>
+    <key>StandardErrorPath</key>
+    <string>__HOME__/Library/Logs/crate-tunnel.log</string>
+</dict>
+</plist>
